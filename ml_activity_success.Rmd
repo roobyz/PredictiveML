@@ -1,0 +1,126 @@
+---
+title: "Machine Learning: Successful Completion of Exercises"
+author: "Roberto Rivera"
+date: "06/20/2015"
+output: html_document
+---
+
+## Synopsis
+
+With devices like Nike FuelBand, and Fitbit it is feasible to inexpensively collect a large amount of Human Activity Recognition (HAR) data. Although users tend to quantify how much they participate in an activity, they rarely consider "how well" they perform the activity.  Using HAR data from [Groupware@LES][1] we aim to leverage information regarding weight-lifting exercises to predict how well an exercise was performed by the participant. Six participants were asked to perform dumbbell exercises with correct form (Class A) and with the most common mistakes, throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+## Data Processing
+
+### Getting the Data
+
+The training and test data are downloaded for analysis.
+
+```{r echo=TRUE, eval=TRUE}
+trnFile = "data/pml-har-trn.csv"
+tstFile = "data/pml-har-tst.csv"
+if (!file.exists(trnFile)) {
+    trnfileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+    download.file(trnfileUrl, destfile = trnFile, method = "curl")
+}
+if (!file.exists(tstFile)) {
+    tstfileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+    download.file(tstfileUrl, destfile = tstFile, method = "curl")
+}
+```
+
+### Load the Data
+
+After loading the data we do some exploratory analysis. The file is just shy twenty thousand records, however many variables contain a significant quantity of missing values. To improve performance and simplify our analysis I am discarding those variables. In addition, I am discarding a few variables not related to exercise performance. This brings our field count from 160 down to 53.
+
+```{r echo=TRUE, eval=TRUE, cache=TRUE}
+# Load the training file
+trn.dat = read.csv(trnFile, na.strings=c("NA","NaN", "", " "), stringsAsFactors=FALSE)
+
+# Quick exploratory analysis
+dim(trn.dat)
+str(trn.dat)
+
+# Identify fields with large quantity of missing values.
+col.names = colnames(trn.dat)
+cnt.min = sum(complete.cases(trn.dat))
+trn.cnt <- data.frame(Field=character(), FieldCnt=integer(), stringsAsFactors=FALSE)
+# Create data-frame with field names and counts.
+for (fld in 1:length(col.names)) {
+    trn.cnt[fld,] <- c(col.names[fld], sum(!is.na(trn.dat[[col.names[fld]]])))
+}
+# Columns not related to exercise performance.
+col.nrel <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", 
+              "cvtd_timestamp", "new_window", "num_window", "classe")
+# Filter out the fields with high missing values and those that are unrelated to performance.
+trn.cnt <- subset(trn.cnt, FieldCnt < cnt.min & !Field %in% col.nrel)
+# Keep the remaining columns.
+col.names = c("classe", as.vector(trn.cnt$Field))
+# Update the training set with the remaining fields
+trn.dat <- trn.dat[col.names]
+# Set the classe variable as a factor.
+trn.dat$classe <- as.factor(trn.dat$classe)
+dim(trn.dat)
+# house-cleaning
+rm("cnt.min", "col.names", "col.nrel", "fld", "trnFile")
+```
+
+### Preprocessing the Data
+
+First we need to check how correlated the variables are.  The correlation plot shows that there are many variables that are both negatively and positively correlated. Rather than remove the highly correlated variables, we will pursue a Principal Components Analysis (PCA) so that we don't lose predictive power.
+
+```{r echo=TRUE, eval=TRUE, cache=TRUE, fig.height=8, fig.width=8 }
+library(corrplot)
+library(caret)
+#library(kernlab)
+
+# build a correlation matrix excluding the "classe" variable
+corrMatx <- cor(trn.dat[, -1])
+# identify highly correlated values
+highCorr <- sum(abs(corrMatx[upper.tri(corrMatx)]) > .9); highCorr
+# plot the correlation matrix
+corrplot(corrMatx, 
+         order = "FPC", method = "color", type = "lower", 
+         tl.cex = 0.7, tl.col = "black")
+
+# Partition the data.
+Train <- createDataPartition(y=trn.dat$classe, p=0.7, list=FALSE)
+trn.train <- trn.dat[Train,]
+trn.valid <- trn.dat[-Train,]
+```
+
+### Machine Learning
+
+This step can be a bit compute intensive. For increase accuracy, we went with a Regression Tree model. However, to compensate for memory constraints we set the number of trees to 25 and switch the training control method. To increase accuracy, assuming we have enough resources, we can increase the number of trees to 100 or more. The cross validation matrix shows where the mismatches are. Considering the low number of trees used, the results are pretty accurate. The out of sample error is pretty low at 1.27%.
+
+```{r echo=TRUE, eval=TRUE, cache=TRUE}
+set.seed(123)
+#Fit a random forest model to the training set.
+fit.trn <- train(classe ~ ., data = trn.train, method="rf", 
+                 prox=TRUE, importance=TRUE, ntree=25, 
+                 trControl = trainControl(method = "cv", number = 4))
+fit.trn; fit.trn$finalModel
+```
+
+### Model Analysis and Accuracy
+
+The model accuracy is on the training data is 98.7%, but when applied to the validation set is 99.2%. The following plot, show the relative importance of each variable in order of importance.
+
+```{r echo=TRUE, eval=TRUE, cache=TRUE}
+library(randomForest)
+# Produce accuracy for training set.
+confusionMatrix(trn.valid$classe, predict(fit.trn, trn.valid))$overall[1]
+varImpPlot(fit.trn$finalModel, sort = TRUE, type = 1, pch = 19, col = 1, cex = 1, 
+    main = "Model Components by Importance")
+```
+
+## Conclusion
+
+After building the final model, testing it on our validation set, we can apply it to the original test set to check for prediction accuracy.
+
+```{r echo=TRUE, eval=TRUE, cache=TRUE}
+trn.tst = read.csv(tstFile, na.strings=c("NA","NaN", "", " "), stringsAsFactors=FALSE)
+trn.pred <- predict(fit.trn, trn.tst)
+trn.pred
+```
+
+[1]: http://groupware.les.inf.puc-rio.br/har#ixzz3de67BWZU
