@@ -43,18 +43,18 @@ str(trn.dat)
 # Identify fields with large quantity of missing values.
 col.names = colnames(trn.dat)
 cnt.min = sum(complete.cases(trn.dat))
-trn.cnt <- data.frame(Field=character(), FieldCnt=integer(), stringsAsFactors=FALSE)
+trn.cnt.df <- data.frame(Field=character(), FieldCnt=integer(), stringsAsFactors=FALSE)
 # Create data-frame with field names and counts.
 for (fld in 1:length(col.names)) {
-    trn.cnt[fld,] <- c(col.names[fld], sum(!is.na(trn.dat[[col.names[fld]]])))
+    trn.cnt.df[fld,] <- c(col.names[fld], sum(!is.na(trn.dat[[col.names[fld]]])))
 }
 # Columns not related to exercise performance.
 col.nrel <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", 
               "cvtd_timestamp", "new_window", "num_window", "classe")
 # Filter out the fields with high missing values and those that are unrelated to performance.
-trn.cnt <- subset(trn.cnt, FieldCnt < cnt.min & !Field %in% col.nrel)
+trn.cnt.df <- subset(trn.cnt.df, FieldCnt < cnt.min & !Field %in% col.nrel)
 # Keep the remaining columns.
-col.names = c("classe", as.vector(trn.cnt$Field))
+col.names = c("classe", as.vector(trn.cnt.df$Field))
 # Update the training set with the remaining fields
 trn.dat <- trn.dat[col.names]
 # Set the classe variable as a factor.
@@ -66,7 +66,7 @@ rm("cnt.min", "col.names", "col.nrel", "fld", "trnFile")
 
 ### Preprocessing the Data
 
-First we need to check how correlated the variables are.  The correlation plot shows that there are many variables that are both negatively and positively correlated. Rather than remove the highly correlated variables, we will pursue a Principal Components Analysis (PCA) so that we don't lose predictive power.
+First we need to check how correlated the variables are.  The correlation plot shows that there are many variables that are both negatively and positively correlated. There are eleven fields with 90% or greater correlation. Rather than remove the highly correlated variables, we will preprocess the fields so that we maintain predictive power.
 
 ```{r echo=TRUE, eval=TRUE, cache=TRUE, fig.height=8, fig.width=8 }
 library(corrplot)
@@ -76,7 +76,7 @@ library(caret)
 # build a correlation matrix excluding the "classe" variable
 corrMatx <- cor(trn.dat[, -1])
 # identify highly correlated values
-highCorr <- sum(abs(corrMatx[upper.tri(corrMatx)]) > .9); highCorr
+highCorr <- sum(abs(corrMatx[upper.tri(corrMatx)]) >= .9); highCorr
 # plot the correlation matrix
 corrplot(corrMatx, 
          order = "FPC", method = "color", type = "lower", 
@@ -103,7 +103,7 @@ fit.trn; fit.trn$finalModel
 
 ### Model Analysis and Accuracy
 
-The model accuracy is on the training data is 98.7%, but when applied to the validation set is 99.2%. The following plot, show the relative importance of each variable in order of importance.
+The model accuracy on the training data is 98.7%, but on the validation data accuracy is 99.2%. This is great because it indicates that we haven't over fit the model.  The following plot shows the relative importance of each variable in order of importance.
 
 ```{r echo=TRUE, eval=TRUE, cache=TRUE}
 library(randomForest)
@@ -115,12 +115,22 @@ varImpPlot(fit.trn$finalModel, sort = TRUE, type = 1, pch = 19, col = 1, cex = 1
 
 ## Conclusion
 
-After building the final model, testing it on our validation set, we can apply it to the original test set to check for prediction accuracy.
+After building the final model and testing it on our validation set, we can apply it to the original test set to confirm out prediction accuracy. The final output files will be submitted for grading. The results indicate that all of our validation set had a perfect matched.
 
 ```{r echo=TRUE, eval=TRUE, cache=TRUE}
 trn.tst = read.csv(tstFile, na.strings=c("NA","NaN", "", " "), stringsAsFactors=FALSE)
 trn.pred <- predict(fit.trn, trn.tst)
 trn.pred
+```
+
+```{r echo=TRUE, eval=TRUE, cache=TRUE}
+# Output Results
+library(stringr)
+for(x in 1:length(trn.pred)) {
+    filename = paste0("data/problem_id_", str_pad(x, 2, pad = "0" ), ".txt")
+    write.table(trn.pred[x], file=filename, 
+                quote=FALSE, row.names=FALSE, col.names=FALSE)
+}
 ```
 
 [1]: http://groupware.les.inf.puc-rio.br/har#ixzz3de67BWZU

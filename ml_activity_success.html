@@ -202,18 +202,18 @@ dim(trn.dat)</code></pre>
 <pre class="r"><code># Identify fields with large quantity of missing values.
 col.names = colnames(trn.dat)
 cnt.min = sum(complete.cases(trn.dat))
-trn.cnt &lt;- data.frame(Field=character(), FieldCnt=integer(), stringsAsFactors=FALSE)
+trn.cnt.df &lt;- data.frame(Field=character(), FieldCnt=integer(), stringsAsFactors=FALSE)
 # Create data-frame with field names and counts.
 for (fld in 1:length(col.names)) {
-    trn.cnt[fld,] &lt;- c(col.names[fld], sum(!is.na(trn.dat[[col.names[fld]]])))
+    trn.cnt.df[fld,] &lt;- c(col.names[fld], sum(!is.na(trn.dat[[col.names[fld]]])))
 }
 # Columns not related to exercise performance.
 col.nrel &lt;- c(&quot;X&quot;, &quot;user_name&quot;, &quot;raw_timestamp_part_1&quot;, &quot;raw_timestamp_part_2&quot;, 
               &quot;cvtd_timestamp&quot;, &quot;new_window&quot;, &quot;num_window&quot;, &quot;classe&quot;)
 # Filter out the fields with high missing values and those that are unrelated to performance.
-trn.cnt &lt;- subset(trn.cnt, FieldCnt &lt; cnt.min &amp; !Field %in% col.nrel)
+trn.cnt.df &lt;- subset(trn.cnt.df, FieldCnt &lt; cnt.min &amp; !Field %in% col.nrel)
 # Keep the remaining columns.
-col.names = c(&quot;classe&quot;, as.vector(trn.cnt$Field))
+col.names = c(&quot;classe&quot;, as.vector(trn.cnt.df$Field))
 # Update the training set with the remaining fields
 trn.dat &lt;- trn.dat[col.names]
 # Set the classe variable as a factor.
@@ -225,7 +225,7 @@ rm(&quot;cnt.min&quot;, &quot;col.names&quot;, &quot;col.nrel&quot;, &quot;fld&q
 </div>
 <div id="preprocessing-the-data" class="section level3">
 <h3>Preprocessing the Data</h3>
-<p>First we need to check how correlated the variables are. The correlation plot shows that there are many variables that are both negatively and positively correlated. Rather than remove the highly correlated variables, we will pursue a Principal Components Analysis (PCA) so that we don’t lose predictive power.</p>
+<p>First we need to check how correlated the variables are. The correlation plot shows that there are many variables that are both negatively and positively correlated. There are eleven fields with 90% or greater correlation. Rather than remove the highly correlated variables, we will preprocess the fields so that we maintain predictive power.</p>
 <pre class="r"><code>library(corrplot)
 library(caret)
 #library(kernlab)
@@ -233,7 +233,7 @@ library(caret)
 # build a correlation matrix excluding the &quot;classe&quot; variable
 corrMatx &lt;- cor(trn.dat[, -1])
 # identify highly correlated values
-highCorr &lt;- sum(abs(corrMatx[upper.tri(corrMatx)]) &gt; .9); highCorr</code></pre>
+highCorr &lt;- sum(abs(corrMatx[upper.tri(corrMatx)]) &gt;= .9); highCorr</code></pre>
 <pre><code>## [1] 11</code></pre>
 <pre class="r"><code># plot the correlation matrix
 corrplot(corrMatx, 
@@ -292,7 +292,7 @@ fit.trn; fit.trn$finalModel</code></pre>
 </div>
 <div id="model-analysis-and-accuracy" class="section level3">
 <h3>Model Analysis and Accuracy</h3>
-<p>The model accuracy is on the training data is 98.7%, but when applied to the validation set is 99.2%. The following plot, show the relative importance of each variable in order of importance.</p>
+<p>The model accuracy on the training data is 98.7%, but on the validation data accuracy is 99.2%. This is great because it indicates that we haven’t over fit the model. The following plot shows the relative importance of each variable in order of importance.</p>
 <pre class="r"><code>library(randomForest)
 # Produce accuracy for training set.
 confusionMatrix(trn.valid$classe, predict(fit.trn, trn.valid))$overall[1]</code></pre>
@@ -305,11 +305,19 @@ confusionMatrix(trn.valid$classe, predict(fit.trn, trn.valid))$overall[1]</code>
 </div>
 <div id="conclusion" class="section level2">
 <h2>Conclusion</h2>
+<p>After building the final model and testing it on our validation set, we can apply it to the original test set to confirm out prediction accuracy. The final output files will be submitted for grading. The results indicate that all of our validation set had a perfect matched.</p>
 <pre class="r"><code>trn.tst = read.csv(tstFile, na.strings=c(&quot;NA&quot;,&quot;NaN&quot;, &quot;&quot;, &quot; &quot;), stringsAsFactors=FALSE)
 trn.pred &lt;- predict(fit.trn, trn.tst)
 trn.pred</code></pre>
 <pre><code>##  [1] B A B A A E D B A A B C B A E E A B B B
 ## Levels: A B C D E</code></pre>
+<pre class="r"><code># Output Results
+library(stringr)
+for(x in 1:length(trn.pred)) {
+    filename = paste0(&quot;data/problem_id_&quot;, str_pad(x, 2, pad = &quot;0&quot; ), &quot;.txt&quot;)
+    write.table(trn.pred[x], file=filename, 
+                quote=FALSE, row.names=FALSE, col.names=FALSE)
+}</code></pre>
 </div>
 
 
