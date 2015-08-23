@@ -1,19 +1,25 @@
 ---
-title: "Machine Learning: Successful Completion of Exercises"
+title: 'Machine Learning: Successful Completion of Exercises'
 author: "Roberto Rivera"
-date: "06/20/2015"
-output: html_document
+date: "08/20/2015"
+output:
+  html_document:
+    pandoc_args:
+    - +RTS
+    - -K64m
+    - -RTS
+  pdf_document: default
 ---
 
 ## Synopsis
 
-With devices like Nike FuelBand, and Fitbit it is feasible to inexpensively collect a large amount of Human Activity Recognition (HAR) data. Although users tend to quantify how much they participate in an activity, they rarely consider "how well" they perform the activity.  Using HAR data from [Groupware@LES][1] we aim to leverage information regarding weight-lifting exercises to predict how well an exercise was performed by the participant. Six participants were asked to perform dumbbell exercises with correct form (Class A) and with the most common mistakes, throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+With devices like the Jawbone Up, Nike FuelBand and Fitbit, it is feasible to inexpensively collect and analyze a large quantity of Human Activity Recognition (HAR) data. Although users of these devices tend to quantify how much they participate in an activity, they rarely consider "how well" they perform the activity. Using HAR data from [Groupware@LES][1] we aim to leverage information regarding weight-lifting exercises to predict how well an exercise was performed by the users of HAR devices. Six participants in the Groupware study were asked to perform dumbbell exercises with correct form (Class A) and with the most common mistakes: throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
 
 ## Data Processing
 
 ### Getting the Data
 
-The training and test data are downloaded for analysis.
+Download the training and test data, if not already in the project data folder.
 
 ```{r echo=TRUE, eval=TRUE}
 trnFile = "data/pml-har-trn.csv"
@@ -28,109 +34,273 @@ if (!file.exists(tstFile)) {
 }
 ```
 
-### Load the Data
+### Loading and Preparing the Data
 
-After loading the data we do some exploratory analysis. The file is just shy twenty thousand records, however many variables contain a significant quantity of missing values. To improve performance and simplify our analysis I am discarding those variables. In addition, I am discarding a few variables not related to exercise performance. This brings our field count from 160 down to 53.
+The goal of data prep is to identify the uncorrelated variables that explain as much of the variance possible. In other words, we need to find the fewest quantity of variables that can explain everything that is going on. After loading the data, our exploratory analysis shows that the file is just shy of twenty thousand records. Some variables contain a significant quantity of values that are near-zero-variance or are missing. To improve model performance and simplify our analysis we discard those variables and a few variables not related to exercise performance. This brings our variable count down from 160 to 53.
 
-```{r echo=TRUE, eval=TRUE, cache=TRUE}
+```{r echo=TRUE, eval=TRUE}
+library(caret)
 # Load the training file
-trn.dat = read.csv(trnFile, na.strings=c("NA","NaN", "", " "), stringsAsFactors=FALSE)
+trn.dat = read.csv(trnFile, na.strings=c("NA","NaN", "", " "), stringsAsFactors=FALSE); rm("trnFile")
 
 # Quick exploratory analysis
 dim(trn.dat)
 str(trn.dat)
 
+## Removing unnecessary covariates
+# Columns not related to exercise performance.
+col.nrel <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", 
+              "cvtd_timestamp", "new_window", "num_window")
+# Columns with near zero variance
+nsv <- nearZeroVar(trn.dat, saveMetrics = TRUE)
+col.nzvs <- rownames(nsv[nsv$nzv == TRUE, ])
+# Update the training set with the remaining fields
+col.drops <- c(col.nrel, col.nzvs)
+trn.dat.all <- trn.dat[,!(names(trn.dat) %in% col.drops)]
+
 # Identify fields with large quantity of missing values.
-col.names = colnames(trn.dat)
-cnt.min = sum(complete.cases(trn.dat))
+col.names = colnames(trn.dat.all)
+cnt.min = sum(complete.cases(trn.dat.all))
 trn.cnt.df <- data.frame(Field=character(), FieldCnt=integer(), stringsAsFactors=FALSE)
 # Create data-frame with field names and counts.
 for (fld in 1:length(col.names)) {
-    trn.cnt.df[fld,] <- c(col.names[fld], sum(!is.na(trn.dat[[col.names[fld]]])))
+    trn.cnt.df[fld,] <- c(col.names[fld], sum(!is.na(trn.dat.all[[col.names[fld]]])))
 }
-# Columns not related to exercise performance.
-col.nrel <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", 
-              "cvtd_timestamp", "new_window", "num_window", "classe")
-# Filter out the fields with high missing values and those that are unrelated to performance.
-trn.cnt.df <- subset(trn.cnt.df, FieldCnt < cnt.min & !Field %in% col.nrel)
-# Keep the remaining columns.
-col.names = c("classe", as.vector(trn.cnt.df$Field))
+# Filter out the fields with high quantity of missing values.
+col.keep <- as.vector(subset(trn.cnt.df, FieldCnt < cnt.min)$Field)
 # Update the training set with the remaining fields
-trn.dat <- trn.dat[col.names]
+trn.dat.all <- trn.dat.all[col.keep]
+
+## Cleanup and default model settings
 # Set the classe variable as a factor.
-trn.dat$classe <- as.factor(trn.dat$classe)
-dim(trn.dat)
+trn.dat.all$classe <- as.factor(trn.dat.all$classe)
+dim(trn.dat.all)
 # house-cleaning
-rm("cnt.min", "col.names", "col.nrel", "fld", "trnFile")
+rm("cnt.min", "col.drops", "col.keep", "col.names", "col.nrel", "col.nzvs", "fld", "trn.cnt.df", "nsv")
+
+# Cutoff parameters
+corrRt = 0.80 # Correlation Cutoff 
+dSplit = 0.70 # Training Cutoff
 ```
 
-### Preprocessing the Data
+### Handling Highly-Correlated Data
 
-First we need to check how correlated the variables are.  The correlation plot shows that there are many variables that are both negatively and positively correlated. There are eleven fields with 90% or greater correlation. Rather than remove the highly correlated variables, we will preprocess the fields so that we maintain predictive power.
+We identify variables with correlations greater than or equal to `r corrRt*100`%. Removing them from our training data reduces our variables count from 53 to 40, while maintaining the most information available in the data possible. Although we may introduce a little bias (difference between expected prediction and the truth) by reducing the quantity of predictors, we also reduce the prediction variance (increase accuracy). The goal is to optimize the trade-off between bias and variance.
 
-```{r echo=TRUE, eval=TRUE, cache=TRUE, fig.height=8, fig.width=8 }
+```{r echo=TRUE, eval=TRUE, fig.height=8, fig.width=8 }
+# Load libraries
 library(corrplot)
-library(caret)
-#library(kernlab)
 
-# build a correlation matrix excluding the "classe" variable
-corrMatx <- cor(trn.dat[, -1])
+# Replace working copy of the data
+trn.dat <- trn.dat.all
+
+## Remove highly correlated values.
+# Build a correlation matrix on the remaining columns, excluding the "classe" variable
+corrMatx <- cor(trn.dat[, -dim(trn.dat)[2]])
+summary(corrMatx[upper.tri(corrMatx)])
+highCorr <- sum(abs(corrMatx[upper.tri(corrMatx)]) >= corrRt); highCorr
 # identify highly correlated values
-highCorr <- sum(abs(corrMatx[upper.tri(corrMatx)]) >= .9); highCorr
+var.corr <- findCorrelation(corrMatx, cutoff = corrRt)
+# remove the highly correlated values from the training set
+trn.dat <- trn.dat[,-var.corr]
+
+## Analyze final dataset
+# dimension after highly correlated columns removed
+dim(trn.dat)
+# build a correlation matrix on the remaining columns, excluding the "classe"
+corrMatx <- cor(trn.dat[, -dim(trn.dat)[2]])
+summary(corrMatx[upper.tri(corrMatx)])
 # plot the correlation matrix
 corrplot(corrMatx, 
          order = "FPC", method = "color", type = "lower", 
-         tl.cex = 0.7, tl.col = "black")
+         tl.cex = 0.75, tl.col = "black")
 
-# Partition the data.
-Train <- createDataPartition(y=trn.dat$classe, p=0.7, list=FALSE)
-trn.train <- trn.dat[Train,]
-trn.valid <- trn.dat[-Train,]
+## Set model parameters for model tuning and training
+cntFld = 10   # Number of cross-validation folds
+cntRpt = 3    # Increase the Repeat count for improved cross-validation accuracy
+cntTun = 5    # Parameter for tuning accuracy vs resource consumption
 ```
 
-### Machine Learning
+## Machine Learning
 
-This step can be a bit compute intensive. For increase accuracy, we went with a Regression Tree model. However, to compensate for memory constraints we set the number of trees to 25 and switch the training control method. To increase accuracy, assuming we have enough resources, we can increase the number of trees to 100 or more. The cross validation matrix shows where the mismatches are. Considering the low number of trees used, the results are pretty accurate. The out of sample error is pretty low at 1.27%.
+### Tuning the Models
+
+Next we use a `r dSplit*100`% data split to define our training set. The remaining `r (1-dSplit)*100`% will define our validation set to provide a meaningful estimation of performance. In addition, we use [repeated k-fold cross-validation][2] with `r cntFld` folds to capture the highest average accuracy estimate achieved accross the `r cntRpt` repetition(s). We preprocess the data with "centered and scaled" to reduce noise.
+
+Using our final training set, we tune our models. Since this process can be very resource intensive, we use [OpenBlas][3], which is an optimized library to replace the standard BLAS library used by R. In addition, we use the "doMC" library to specify the number cores to correspond with the maximum number of R jobs to run in parallel. Depending on your tuning parameters and training set size, that this process can easily consume all of your memory and may take a few hours to run.
+
+```{r echo=TRUE, eval=TRUE, fig.height=8, fig.width=8 }
+library(doMC)
+# Define number of parallel processes
+registerDoMC(cores = 4)
+
+# Partition the data with a training and validation split.
+set.seed(123)
+inTrain <- createDataPartition(y=trn.dat$classe, p=dSplit, list=FALSE)
+trn.train <- trn.dat[ inTrain,]
+trn.valid <- trn.dat[-inTrain,]
+
+# Setup seeds for running fully reproducible model in parallel mode
+ivect = cntRpt*cntFld                                        # quantity of integer vectors
+seeds <- vector(mode = "list", length = ivect+1)             # length equals the integer vectors plus one
+for(i in 1:ivect) seeds[[i]] <- sample.int(n=1000, cntTun*2) # seeds for tuning attempts (*2 for Radial SVM)
+seeds[[length(seeds)]] <- sample.int(1000, 1)                # seed for the final model
+
+# Create cross-validation folds to use for model tuning
+myFlds <- createMultiFolds(y=trn.train$classe, k = cntFld, times = cntRpt)
+myCtrl <- trainControl(method = "repeatedCV", seeds = seeds, allowParallel = TRUE,
+                       index = myFlds, number = cntFld, repeats = cntRpt)
+# Standardize the training subset.
+myPrep = c("center", "scale")   # pre-process with center and scaling
+# house-cleaning
+rm("i", "cntFld", "cntRpt", "inTrain", "corrMatx", "highCorr")
+```
+
+We have selected two models to tune. First, the Support Vector Machine (SVM) with a [Radial Basis Function (RBF) kernel][4]. To improve accuracy we doubled the tune length for this model. Second, the [RandomForest][5] model to compare against the first. 
 
 ```{r echo=TRUE, eval=TRUE, cache=TRUE}
-set.seed(123)
-#Fit a random forest model to the training set.
-fit.trn <- train(classe ~ ., data = trn.train, method="rf", 
-                 prox=TRUE, importance=TRUE, ntree=25, 
-                 trControl = trainControl(method = "cv", number = 4))
-fit.trn; fit.trn$finalModel
+# First Model: Radial Support Vector Machine
+system.time(
+    # Fit model to the training set.
+    tune.svr <- train(classe ~ ., data = trn.train, method = "svmRadial", 
+                     tuneLength = cntTun*2, preProcess = myPrep, trControl = myCtrl)
+)
+```
+
+```{r echo=TRUE, eval=TRUE, cache=TRUE}
+# Third Model: Random Forest Model (Extension to Bagging where Trees represent 
+#              Bootstrap samples with Bootstrap nodes)
+system.time(
+    #Fit a random forest model to the training set. Include Importance and Proximity scores
+    tune.rft <- train(classe ~ ., data = trn.train, method="rf", 
+                     #proximity=TRUE, importance=TRUE,  # produce extra info 
+                     tuneLength = cntTun, preProcess = myPrep, trControl = myCtrl)
+)
+```
+
+After tuning these models we can identify the parameters that generate the best performance per model and compare how well the models perform against each other.
+
+```{r echo=TRUE, eval=TRUE}
+tune.svr; tune.rft
+```
+
+The following plots show how well the models do based on the predictor parameters used.
+
+```{r echo=TRUE, eval=TRUE}
+#old.par <- par(mfrow=c(1, 2))
+plot(tune.svr, metric = "Kappa")
+plot(tune.rft, metric = "Kappa")
+#par(old.par)
+
+# Retrive the training errors for the SVM model
+err.svr <- tune.svr$finalModel@error; err.svr
+# Retrieve the OOB error for the Random Forest model based on number of trees used
+ntr     <- tune.rft$finalModel$ntree
+err.rft <- tune.rft$finalModel$err.rate[ntr,1]
+
+# Identify the lowest error rate by number of trees
+treerr.df <- as.data.frame(tune.rft$finalModel$err.rate[,1])
+treerr.df$trees <- row(treerr.df)
+colnames(treerr.df) <- c("err","trees")
+
+# Reduce the number of trees for the Random Forest based on error rate
+ntr = as.vector(head(treerr.df[with(treerr.df, order(err)), ], 1)$trees)
+err.rft <- tune.rft$finalModel$err.rate[ntr, 1]; err.rft
+```
+
+Next we compare the models' performance against each other. The following plots show the density of predictions by error rate, and the relative importance of each model component.
+
+```{r echo=TRUE, eval=TRUE}
+library(randomForest)
+# Compare Models
+resamps <- resamples(list(
+    SVM.Radial      = tune.svr,
+    RandomForest    = tune.rft
+    ))
+summary(resamps)
+# Using Kappa as a more conservative measure for accuracy.
+densityplot(resamps, auto.key=TRUE, metric='Kappa')
+# Compare the lagged differences between the models.
+mdiffs <- diff(resamps)
+summary(mdiffs)
+# Display the variables of importance.
+viv <- order(varImp(tune.rft$finalModel), decreasing = TRUE)
+length(which(viv>0)); viv
+names(trn.dat)[viv]
+```
+
+### Fitting the Models
+
+Now that we have the tuned parameters we select and fit the final model. This process is really fast compared to the tuning of the models. We picked the Radial SVM model because it is faster than the Random Forest and it performs equivalently.
+
+```{r echo=TRUE, eval=TRUE}
+# Calculate the final model with the tuning parameters from the above.
+newGrid = expand.grid(sigma=c(0.01720171), C=c(128))
+system.time(
+    # Fit model to the training set.
+    fit.svr <- train(classe ~ ., data = trn.train, method = "svmRadial", 
+                     tuneGrid = newGrid, 
+                     preProcess = myPrep, trControl = myCtrl)
+)
+```
+
+```{r echo=TRUE, eval=TRUE}
+# Calculate the final model with the tuning parameters from the above.
+newGrid = expand.grid(mtry=c(11))
+system.time(
+    fit.rft <- train(classe ~ ., data = trn.train, method="rf", 
+                     tuneGrid = newGrid, ntree = ntr,
+                     preProcess = myPrep, trControl = myCtrl)
+)
+```
+
+```{r echo=TRUE, eval=TRUE}
+fit.svr; fit.rft
 ```
 
 ### Model Analysis and Accuracy
 
-The model accuracy on the training data is 98.7%, but on the validation data accuracy is 99.2%. This is great because it indicates that we haven't over fit the model.  The following plot shows the relative importance of each variable in order of importance.
+The model accuracy on the training data is `r round(fit.svr$results$Accuracy * 100, 1)`%, but on the validation data accuracy is about 99.3%. This indicates that our out of sample error is very good and that we haven't overfit the model.
 
-```{r echo=TRUE, eval=TRUE, cache=TRUE}
-library(randomForest)
-# Produce accuracy for training set.
-confusionMatrix(trn.valid$classe, predict(fit.trn, trn.valid))$overall[1]
-varImpPlot(fit.trn$finalModel, sort = TRUE, type = 1, pch = 19, col = 1, cex = 1, 
-    main = "Model Components by Importance")
+```{r echo=TRUE, eval=TRUE}
+# Calculate the model accuracy on the training set.
+yhat.svr <- predict(fit.svr, trn.valid)
+confusionMatrix(trn.valid$classe, yhat.svr)
+yhat.rft <- predict(fit.rft, trn.valid)
+confusionMatrix(trn.valid$classe, yhat.rft)
+```
+
+If you need greater model accuracy, you can combine the results of two or more models. The following example demonstrates how you might accomplish this. By including the results of the prior two models, the combined model can generate higher accuracy. In this example, notice that the accuracy and confusion matrix results have improved. Since both of our models produce excellent results, the combined model will not be used and is provided for demonstration only.
+
+```{r echo=TRUE, eval=TRUE}
+pred.df <- data.frame(yhat.svr, yhat.rft, classe=trn.valid$classe)
+fit.comb <- train(classe ~ ., data = pred.df, method="rf")
+yhat.comb <- predict(fit.comb, pred.df)
+confusionMatrix(trn.valid$classe, yhat.comb)
 ```
 
 ## Conclusion
 
-After building the final model and testing it on our validation set, we can apply it to the original test set to confirm out prediction accuracy. The final output files will be submitted for grading. The results indicate that all of our validation set had a perfect matched.
+After building the final model and testing it on our validation set, we apply it to the test set to confirm our prediction accuracy. Our model had a 100% match prediction on the test set. The final output will be applied to our Coursera project submission for grading.
 
-```{r echo=TRUE, eval=TRUE, cache=TRUE}
+```{r echo=TRUE, eval=TRUE}
 trn.tst = read.csv(tstFile, na.strings=c("NA","NaN", "", " "), stringsAsFactors=FALSE)
-trn.pred <- predict(fit.trn, trn.tst)
-trn.pred
+tst.pred <- predict(fit.svr, trn.tst); tst.pred
 ```
 
-```{r echo=TRUE, eval=TRUE, cache=TRUE}
+```{r echo=TRUE, eval=TRUE}
 # Output Results
 library(stringr)
-for(x in 1:length(trn.pred)) {
+for(x in 1:length(tst.pred)) {
     filename = paste0("data/problem_id_", str_pad(x, 2, pad = "0" ), ".txt")
-    write.table(trn.pred[x], file=filename, 
+    write.table(tst.pred[x], file=filename, 
                 quote=FALSE, row.names=FALSE, col.names=FALSE)
 }
 ```
 
 [1]: http://groupware.les.inf.puc-rio.br/har#ixzz3de67BWZU
+[2]: https://en.wikipedia.org/wiki/Cross-validation_(statistics)
+[3]: http://www.openblas.net/
+[4]: https://en.wikipedia.org/wiki/Radial_basis_function_kernel
+[5]: https://en.wikipedia.org/wiki/Random_forest
+

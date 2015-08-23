@@ -1,8 +1,10 @@
 base
-corrplot
 lattice
 ggplot2
 caret
+corrplot
+foreach
+iterators
+doMC
 kernlab
 randomForest
-stringr
