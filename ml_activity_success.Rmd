@@ -1,19 +1,26 @@
 ---
-title: 'Machine Learning: Successful Completion of Exercises'
+title: 'Machine Learning: Successful Completion of Fitness Exercises'
 author: "Roberto Rivera"
-date: "08/20/2015"
+date: "01/22/2017"
 output:
   html_document:
-    pandoc_args:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    theme: united
+    highlight: zenburn
+  pandoc_args:
     - +RTS
     - -K64m
     - -RTS
   pdf_document: default
 ---
 
-## Synopsis
+## Introduction
 
 With devices like the Jawbone Up, Nike FuelBand and Fitbit, it is feasible to inexpensively collect and analyze a large quantity of Human Activity Recognition (HAR) data. Although users of these devices tend to quantify how much they participate in an activity, they rarely consider "how well" they perform the activity. Using HAR data from [Groupware@LES][1] we aim to leverage information regarding weight-lifting exercises to predict how well an exercise was performed by the users of HAR devices. Six participants in the Groupware study were asked to perform dumbbell exercises with correct form (Class A) and with the most common mistakes: throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Using this HAR class data, we plan to leverage machine learning algorithms to develop a model that can distinguish between participants that have exercised correctly versus those that didn't and what their mistakes were. We will then use this model to assess how accurately we can classify the exercises performed by other individuals solely based on their HAR data.
 
 ## Data Processing
 
@@ -21,7 +28,9 @@ With devices like the Jawbone Up, Nike FuelBand and Fitbit, it is feasible to in
 
 Download the training and test data, if not already in the project data folder.
 
-```{r echo=TRUE, eval=TRUE}
+```{r get_data, echo=TRUE, eval=TRUE, collapse=TRUE}
+setwd("/home/rstudio/code")
+
 trnFile = "data/pml-har-trn.csv"
 tstFile = "data/pml-har-tst.csv"
 if (!file.exists(trnFile)) {
@@ -34,12 +43,21 @@ if (!file.exists(tstFile)) {
 }
 ```
 
-### Loading and Preparing the Data
+### Preparing the Data
 
-The goal of data prep is to identify the uncorrelated variables that explain as much of the variance possible. In other words, we need to find the fewest quantity of variables that can explain everything that is going on. After loading the data, our exploratory analysis shows that the file is just shy of twenty thousand records. Some variables contain a significant quantity of values that are near-zero-variance or are missing. To improve model performance and simplify our analysis we discard those variables and a few variables not related to exercise performance. This brings our variable count down from 160 to 53.
+The goal of data prep is to identify the variables that explain as much of the variance possible and eliminate the remainder. In other words, we need to find the fewest quantity of variables that can explain everything that is going on. Our exploratory analysis shows that the file is just shy of twenty thousand records. Some variables contain a significant quantity of values that are near-zero-variance or are missing. To improve model performance and simplify our analysis we discard those variables and a few variables not related to exercise performance. This brings our variable count down from 160 to 53. Also, the provided data has a relatively balanced class variables, which simplifies this analysis somewhat.
 
-```{r echo=TRUE, eval=TRUE}
+```{r prep_data, echo=TRUE, eval=TRUE, collapse=TRUE}
+# Load libraries
 library(caret)
+library(knitr)
+library(corrplot)
+library(doMC)
+library(ggplot2)
+
+# Define number of parallel processes
+registerDoMC(cores = 4)
+
 # Load the training file
 trn.dat = read.csv(trnFile, na.strings=c("NA","NaN", "", " "), stringsAsFactors=FALSE); rm("trnFile")
 
@@ -75,225 +93,705 @@ trn.dat.all <- trn.dat.all[col.keep]
 # Set the classe variable as a factor.
 trn.dat.all$classe <- as.factor(trn.dat.all$classe)
 dim(trn.dat.all)
+table(trn.dat$classe)
+
 # house-cleaning
-rm("cnt.min", "col.drops", "col.keep", "col.names", "col.nrel", "col.nzvs", "fld", "trn.cnt.df", "nsv")
+rm("cnt.min", "col.drops", "col.keep", "col.names", "col.nrel", "col.nzvs", "fld", "trn.cnt.df", "nsv","trn.dat")
 
 # Cutoff parameters
 corrRt = 0.80 # Correlation Cutoff 
 dSplit = 0.70 # Training Cutoff
+
+## Set model parameters for model tuning and training
+cntFld = 8    # Number of cross-validation folds
+cntRpt = 3    # Increase the Repeat count for improved cross-validation accuracy
+cntTun = 5    # Parameter for tuning accuracy vs resource consumption
 ```
 
-### Handling Highly-Correlated Data
+### Handling Multicollinearity {.tabset .tabset-fade}
 
-We identify variables with correlations greater than or equal to `r corrRt*100`%. Removing them from our training data reduces our variables count from 53 to 40, while maintaining the most information available in the data possible. Although we may introduce a little bias (difference between expected prediction and the truth) by reducing the quantity of predictors, we also reduce the prediction variance (increase accuracy). The goal is to optimize the trade-off between bias and variance.
+[Multicollinearity][6] occurs when model variables are correlated to your response variable as well as each other. This overinflates the standard errors which makes some variables seem statistically insignificant when they should be significant. We have a few options for dealing with this issue. 
 
-```{r echo=TRUE, eval=TRUE, fig.height=8, fig.width=8 }
-# Load libraries
-library(corrplot)
+One option is to reduce the number of predictors to a smaller set of uncorrelated components using [Partial Least Squares Regression (PLS)][9] or [Principal Components Analysis (PCA)][10]. Another option is to simply remove the variables from the model. Removing predictors may introduce some bias (difference between expected prediction and the truth), but may also reduce the prediction variance (increase accuracy). The goal is to optimize the trade-off between bias and variance. Both options reduce our variable count and speeds our model calculation.
 
-# Replace working copy of the data
-trn.dat <- trn.dat.all
+The goal of PCA is to explain the maximum amount of variance with the fewest number of principal components. PCA creates these components by transforming the variables into a smaller sub-space of variables (dimensionality reduction) that are uncorrelated with each other. A challenge with the components is that it can be difficult to explain what is driving model performance.
 
-## Remove highly correlated values.
-# Build a correlation matrix on the remaining columns, excluding the "classe" variable
-corrMatx <- cor(trn.dat[, -dim(trn.dat)[2]])
-summary(corrMatx[upper.tri(corrMatx)])
-highCorr <- sum(abs(corrMatx[upper.tri(corrMatx)]) >= corrRt); highCorr
-# identify highly correlated values
-var.corr <- findCorrelation(corrMatx, cutoff = corrRt)
-# remove the highly correlated values from the training set
-trn.dat <- trn.dat[,-var.corr]
+We are going to approach this three different ways to get a sense of effort and impact: 1) we'll remove the multicollinear predictors, 2) we'll apply PCA to the multicolliear predictors, and 3) we'll apply PCA to all the predictors. Using the Caret R package, we apply a [Box-Cox Transformation][11] to correct for skewness, center and scale each variable and then apply PCA in one call to pre-process the variables. 
 
-## Analyze final dataset
-# dimension after highly correlated columns removed
-dim(trn.dat)
-# build a correlation matrix on the remaining columns, excluding the "classe"
-corrMatx <- cor(trn.dat[, -dim(trn.dat)[2]])
-summary(corrMatx[upper.tri(corrMatx)])
+We defined a stepwise [Variable Inflaction Factor (VIF)][12] function to identify multicollinear variables within our specified threshold. A value greater than 10 is considered to be high collinearity. The threshold may be set to the required tolerance needed for the specific analysis. 
+
+```{r setup_vif, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, cache=TRUE, collapse=TRUE}
+# compile stepwise VIF selection function for reducing collinearity among explanatory variables
+vif_func<-function(in_frame, thresh=10, trace=T, ...){
+  require(fmsb)
+  
+  if(class(in_frame) != 'data.frame') in_frame<-data.frame(in_frame)
+  
+  #get initial vif value for all comparisons of variables
+  vif_init<-NULL
+  var_names <- names(in_frame)
+  for(val in var_names){
+      regressors <- var_names[-which(var_names == val)]
+      form <- paste(regressors, collapse = '+')
+      form_in <- formula(paste(val, '~', form))
+      vif_init<-rbind(vif_init, c(val, VIF(lm(form_in, data = in_frame, ...))))
+  }
+  vif_max<-max(as.numeric(vif_init[,2]))
+
+  if(vif_max < thresh){
+    if(trace==T){ #print output of each iteration
+        prmatrix(vif_init,collab=c('var','vif'), rowlab=rep('', nrow(vif_init)), quote=F)
+        cat('\n')
+        cat(paste('All variables have VIF < ', thresh,', max VIF ',round(vif_max,2), sep=''),'\n\n')
+    }
+    return(var_names)
+  }
+  else {
+    in_dat<-in_frame
+
+    #backwards selection of explanatory variables, stops when all VIF values are below 'thresh'
+    while(vif_max >= thresh) {
+      
+      vif_vals<-NULL
+      var_names <- names(in_dat)
+        
+      for(val in var_names){
+        regressors <- var_names[-which(var_names == val)]
+        form <- paste(regressors, collapse = '+')
+        form_in <- formula(paste(val, '~', form))
+        vif_add<-VIF(lm(form_in, data = in_dat, ...))
+        vif_vals<-rbind(vif_vals,c(val,vif_add))
+      }
+      max_row<-which(vif_vals[,2] == max(as.numeric(vif_vals[,2])))[1]
+
+      vif_max<-as.numeric(vif_vals[max_row,2])
+
+      if(vif_max<thresh) break
+      
+      if(trace==T){ #print output of each iteration
+        prmatrix(vif_vals,collab=c('var','vif'),rowlab=rep('',nrow(vif_vals)),quote=F)
+        cat('\n')
+        cat('removed: ',vif_vals[max_row,1],vif_max,'\n\n')
+        flush.console()
+      }
+
+      in_dat<-in_dat[,!names(in_dat) %in% vif_vals[max_row,1]]
+    }
+    return(names(in_dat))
+  }
+}
+```
+
+**Select the tabs below to compare multicollinearity across the different approaches versus the baseline**
+
+#### Baseline Correlation Matrix
+
+This plot is difficult to read, but the key take-away is that the baseline variables are *<u>unusable for modelling</u>* due to significant multicollinearity. This is hightlighted by the darker colored cross-sections. The summary below the plot highlights the overall multicollinearity.
+
+```{r init_collinearity, echo=TRUE, eval=TRUE, fig.height=6.5, fig.width=6.5, collapse=TRUE}
+# Build a correlation matrix on the initial variables, excluding the "classe" variable
+corrMatx <- cor(trn.dat.all[, -dim(trn.dat.all)[2]])
+corrSumm <- summary(corrMatx[upper.tri(corrMatx)])[1:6]
+corrTabl <- t(as.data.frame(as.vector(corrSumm)))
+
+colnames(corrTabl) <- attr(corrSumm, 'names') # c("Minimum", "1st Quartile", "Median", "Mean", "3rd Quartile", "Maximum") #
+rownames(corrTabl) <- "Baseline Summary"
+
 # plot the correlation matrix
 corrplot(corrMatx, 
          order = "FPC", method = "color", type = "lower", 
          tl.cex = 0.75, tl.col = "black")
 
-## Set model parameters for model tuning and training
-cntFld = 10   # Number of cross-validation folds
-cntRpt = 3    # Increase the Repeat count for improved cross-validation accuracy
-cntTun = 5    # Parameter for tuning accuracy vs resource consumption
+# print the correlation summary
+kable(dim(trn.dat.all)[2], col.names = c("Variables"), format='html')
+kable(corrTabl, digits = 4, align = 'r', format='markdown')
+```
+
+#### Drop Correlation Matrix
+
+Using the stepwise VIF function, we dropped variables with collinearity threshold greater than two. Notice the fainter colors compared to the initial matrix. Although we significantly improved our collinearity, we may loose some of the predictive variance in the dropped variables.
+
+```{r setup_collinearity_drp, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, cache=TRUE, collapse=TRUE}
+# use stepwise VIF remove the highly correlated values from the training variable list
+var.keep <- vif_func(in_frame=trn.dat.all[, -dim(trn.dat.all)[2]], thresh=2, trace=F)
+
+trn.dat.drp  <- trn.dat.all[,c(var.keep, "classe")]
+```
+
+```{r handle_collinearity_drp, echo=TRUE, eval=TRUE, fig.height=6, fig.width=6, collapse=TRUE}
+# Build a correlation matrix on the initial variables, excluding the "classe" variable
+corrMatx <- cor(trn.dat.drp[, -dim(trn.dat.drp)[2]])
+corrSumm <- summary(corrMatx[upper.tri(corrMatx)])[1:6]
+corrTabl <- t(as.data.frame(as.vector(corrSumm)))
+
+colnames(corrTabl) <- attr(corrSumm, 'names')
+rownames(corrTabl) <- "Drop Summary"
+
+# plot the correlation matrix
+corrplot(corrMatx, 
+         order = "FPC", method = "color", type = "lower", 
+         tl.cex = 0.75, tl.col = "black")
+
+# print the correlation summary
+kable(dim(trn.dat.drp)[2], col.names = c("Variables"), format='html')
+kable(corrTabl, digits = 4, align = 'r', format='markdown')
+```
+
+#### Hybrid Correlation Matrix
+
+Rather than dropping all of the variables that exceed our threshold, this step extracts their priciple components using PCA. The surviving variables and priciple components are then combined to create our training set. We removed most of the significant collinearity while maintainining the predictive variance. Depending on your needs, the remaining collinearity may still be too high.
+
+```{r setup_collinearity_hyb, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, cache=TRUE, collapse=TRUE}
+# Reassign variables to the PCA list that push our VIF threshold above 6
+var.pck <- setdiff(var.keep, 
+                   c("magnet_arm_x", "magnet_forearm_x", "gyros_arm_x", 
+                     "magnet_forearm_y", "gyros_forearm_y", "total_accel_dumbbell"))
+
+# Identify the collinear variables
+var.pca <- setdiff(colnames(trn.dat.all), c(var.pck, "classe"))
+
+# Preprocess the collinear variables
+trn.ppv = preProcess(trn.dat.all[,c(var.pca)], method=c("BoxCox", "center", "scale", "pca"))
+
+# Model the PCA components
+trn.pca = (predict(trn.ppv, trn.dat.all[,c(var.pca)]))
+
+# Create hybrid dataframe with noncollinear and pca variables.
+trn.dat.hyb  <- cbind(trn.dat.all[,c(var.pck)], trn.pca, classe=trn.dat.all$classe)
+
+# check for any remaining multicollinearity
+var.pck <- vif_func(in_frame=trn.dat.hyb[, -dim(trn.dat.hyb)[2]], thresh=9, trace=T)
+```
+
+```{r handle_collinearity_hyb, echo=TRUE, eval=TRUE, fig.height=6, fig.width=6, collapse=TRUE}
+# Build a correlation matrix on the initial variables, excluding the "classe" variable
+corrMatx <- cor(trn.dat.hyb[, -dim(trn.dat.hyb)[2]])
+corrSumm <- summary(corrMatx[upper.tri(corrMatx)])[1:6]
+corrTabl <- t(as.data.frame(as.vector(corrSumm)))
+
+colnames(corrTabl) <- attr(corrSumm, 'names')
+rownames(corrTabl) <- "Hybrid Summary"
+
+# plot the correlation matrix
+corrplot(corrMatx, 
+         order = "FPC", method = "color", type = "lower", 
+         tl.cex = 0.75, tl.col = "black")
+
+# print the correlation summary
+kable(dim(trn.dat.hyb)[2], col.names = c("Variables"), format='html')
+kable(corrTabl, digits = 4, align = 'r', format='markdown')
+```
+
+#### PCA Correlation Matrix
+
+For maximum reduction of multicollinearity, this approach transforms all the variables into princicple components. Notice how we eliminated all multicollinearity. The only real challenge with this approach, is that it becomes less intuitive in understanding what drives the model.
+
+```{r setup_collinearity_pca, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, cache=TRUE, collapse=TRUE}
+# Identify all the variables
+var.pca  <- setdiff(colnames(trn.dat.all), c("classe"))
+
+# Preprocess all the variables
+trn.ppv = preProcess(trn.dat.all[,c(var.pca)], method=c("BoxCox", "center", "scale", "pca"))
+
+# Model the PCA components
+trn.pca = (predict(trn.ppv, trn.dat.all[,c(var.pca)]))
+
+# Create pca dataframe.
+trn.dat.pca  <- cbind(trn.pca, classe=trn.dat.all$classe)
+
+# check for any remaining multicollinearity
+var.pca <- vif_func(in_frame=trn.dat.pca[, -dim(trn.dat.pca)[2]], thresh=9, trace=T)
+```
+
+```{r handle_collinearity_pca, echo=TRUE, eval=TRUE, fig.height=6, fig.width=6, collapse=TRUE}
+# Build a correlation matrix on the initial variables, excluding the "classe" variable
+corrMatx <- cor(trn.dat.pca[, -dim(trn.dat.pca)[2]])
+corrSumm <- summary(corrMatx[upper.tri(corrMatx)])[1:6]
+corrTabl <- t(as.data.frame(as.vector(corrSumm)))
+
+colnames(corrTabl) <- attr(corrSumm, 'names')
+rownames(corrTabl) <- "PCA Summary"
+
+# plot the correlation matrix
+corrplot(corrMatx, 
+         order = "FPC", method = "color", type = "lower", 
+         tl.cex = 0.75, tl.col = "black")
+
+# print the correlation summary
+kable(dim(trn.dat.pca)[2], col.names = c("Variables"), format='html')
+kable(corrTabl, digits = 4, align = 'r', format='markdown')
+
+# Select the PCA dataset for training.
+trn.dat <- trn.dat.pca
 ```
 
 ## Machine Learning
 
-### Tuning the Models
+### Tuning Preparation
 
-Next we use a `r dSplit*100`% data split to define our training set. The remaining `r (1-dSplit)*100`% will define our validation set to provide a meaningful estimation of performance. In addition, we use [repeated k-fold cross-validation][2] with `r cntFld` folds to capture the highest average accuracy estimate achieved accross the `r cntRpt` repetition(s). We preprocess the data with "centered and scaled" to reduce noise.
+We are using a `r dSplit*100`% data split to define our training set. To provide a meaningful estimation of performance, the remaining `r (1-dSplit)*100`% will be divided equally to define our validation and test sets. In addition, we use [repeated k-fold cross-validation][2] with `r cntFld` folds to capture the highest average accuracy estimate achieved accross the `r cntRpt` repetition(s). We preprocess the data with "centered and scaled" to reduce noise.
 
 Using our final training set, we tune our models. Since this process can be very resource intensive, we use [OpenBlas][3], which is an optimized library to replace the standard BLAS library used by R. In addition, we use the "doMC" library to specify the number cores to correspond with the maximum number of R jobs to run in parallel. Depending on your tuning parameters and training set size, that this process can easily consume all of your memory and may take a few hours to run.
 
-```{r echo=TRUE, eval=TRUE, fig.height=8, fig.width=8 }
-library(doMC)
-# Define number of parallel processes
-registerDoMC(cores = 4)
-
-# Partition the data with a training and validation split.
+```{r model_params, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, collapse=TRUE}
+# Partition the data with training, validation, and test sets.
 set.seed(123)
 inTrain <- createDataPartition(y=trn.dat$classe, p=dSplit, list=FALSE)
-trn.train <- trn.dat[ inTrain,]
-trn.valid <- trn.dat[-inTrain,]
+trn.trn <- trn.dat[ inTrain,]
+trn.vld <- trn.dat[-inTrain,]
+inValid <- createDataPartition(y=trn.vld$classe, p=0.50, list=FALSE)
+trn.tst <- trn.vld[-inValid,]
+trn.vld <- trn.vld[ inValid,]
 
 # Setup seeds for running fully reproducible model in parallel mode
 ivect = cntRpt*cntFld                                        # quantity of integer vectors
 seeds <- vector(mode = "list", length = ivect+1)             # length equals the integer vectors plus one
-for(i in 1:ivect) seeds[[i]] <- sample.int(n=1000, cntTun*2) # seeds for tuning attempts (*2 for Radial SVM)
+for(i in 1:ivect) seeds[[i]] <- sample.int(n=1000, cntTun*3) # seeds for tuning attempts (*3 for Radial SVM)
 seeds[[length(seeds)]] <- sample.int(1000, 1)                # seed for the final model
 
 # Create cross-validation folds to use for model tuning
-myFlds <- createMultiFolds(y=trn.train$classe, k = cntFld, times = cntRpt)
-myCtrl <- trainControl(method = "repeatedCV", seeds = seeds, allowParallel = TRUE,
-                       index = myFlds, number = cntFld, repeats = cntRpt)
+myMetr <- "Kappa"     # ROC, Kappa, Accuracy
+myFlds <- createMultiFolds(y=trn.trn$classe, k = cntFld, times = cntRpt)
+myCtrl <- trainControl(method = "repeatedCV", seeds = seeds, allowParallel = TRUE, 
+                       #savePredictions=TRUE, classProbs=TRUE, summaryFunction=multiClassSummary,
+                       number = cntFld, repeats = cntRpt)
+
 # Standardize the training subset.
 myPrep = c("center", "scale")   # pre-process with center and scaling
+
 # house-cleaning
-rm("i", "cntFld", "cntRpt", "inTrain", "corrMatx", "highCorr")
+rm("i", "cntFld", "cntRpt", "inTrain", "corrMatx", "vif_func")
 ```
 
-We have selected two models to tune. First, the Support Vector Machine (SVM) with a [Radial Basis Function (RBF) kernel][4]. To improve accuracy we doubled the tune length for this model. Second, the [RandomForest][5] model to compare against the first. 
+### Grid Searching {.tabset .tabset-fade}
 
-```{r echo=TRUE, eval=TRUE, cache=TRUE}
+There are two ways to tune an algorithm using the Caret R package. The first, allow the system to do it automatically by setting the `tuneLength` parameter to indicate the number of different values to try for each algorithm parameter. This makes a crude guess on what values to try, but can quickly get you in a reasonable range. This is the approach we've taken on our first tuning pass. The second approach involves manually setting the tuning grid to search. Our second tuning pass uses this approach. We start with the best performaning parameters from the first tuning pass and create a more focused tuning grid to further refine our parameters.
+
+We have selected three models to tune: 1) Support Vector Machine (SVM) with a [Radial Basis Function (RBF) kernel][4], 2) [RandomForest][5], and 3) [Stochastic Gradient Boost Machine][7]. To improve SVM accuracy we doubled the tune length for this model. For good measure, we also include an [Ensemble][8] model of the three algorithms to obtain better predictive performance.
+
+#### SVM Passes
+
+```{r model_svr_fpass, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # First Model: Radial Support Vector Machine
+# First Pass: Tunelength
 system.time(
     # Fit model to the training set.
-    tune.svr <- train(classe ~ ., data = trn.train, method = "svmRadial", 
-                     tuneLength = cntTun*2, preProcess = myPrep, trControl = myCtrl)
+    tune.svr1 <- train(classe ~ ., data = trn.trn, method = "svmRadial",
+                      tuneLength = cntTun*2, preProcess = myPrep, 
+                      metric = myMetr, trControl = myCtrl)
 )
+tune.svr1;
 ```
 
-```{r echo=TRUE, eval=TRUE, cache=TRUE}
-# Third Model: Random Forest Model (Extension to Bagging where Trees represent 
-#              Bootstrap samples with Bootstrap nodes)
+```{r model_svr_spass, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+# First Model: Radial Support Vector Machine
+# Second Pass: Grid search based on the parameter values selected in the first pass
+mySig = round(tune.svr1$bestTune$sigma, 3)
+myCst = tune.svr1$bestTune$C
+myGrd = expand.grid(sigma = c(mySig-.005, mySig, mySig+.005),
+                    C = c(myCst-5, myCst-2, myCst, myCst+2, myCst+5))
+
+system.time(
+    # Fit model to the training set.
+    tune.svr2 <- train(classe ~ ., data = trn.trn, method = "svmRadial",
+                       tuneGrid = myGrd, preProcess = myPrep, 
+                       metric = myMetr, trControl = myCtrl)
+)
+tune.svr2;
+```
+
+#### Random Forest
+
+```{r model_rft_fpass, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+# Second Model: Random Forest Model (Extension to Bagging where Trees represent 
+#               Bootstrap samples with Bootstrap nodes)
+# First Pass: Tune Length
 system.time(
     #Fit a random forest model to the training set. Include Importance and Proximity scores
-    tune.rft <- train(classe ~ ., data = trn.train, method="rf", 
-                     #proximity=TRUE, importance=TRUE,  # produce extra info 
-                     tuneLength = cntTun, preProcess = myPrep, trControl = myCtrl)
+    tune.rft1 <- train(classe ~ ., data = trn.trn, method="rf",
+                       #proximity=TRUE, importance=TRUE,  # produce extra info 
+                       tuneLength = cntTun, preProcess = myPrep, 
+                       metric = myMetr, trControl = myCtrl)
 )
+tune.rft1
 ```
+
+```{r model_rft_spass, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+# Second Model: Random Forest Model (Extension to Bagging where Trees represent 
+#               Bootstrap samples with Bootstrap nodes)
+# Second Pass: Grid search based on the parameter values selected in the first pass
+myMtry = max(3, tune.rft1$bestTune$mtry)
+myGrd = expand.grid(mtry = c(myMtry-2, myMtry-1, myMtry, myMtry+1, myMtry+2))
+
+system.time(
+    # Fit model to the training set.
+    tune.rft2 <- train(classe ~ ., data = trn.trn, method = "rf",
+                       tuneGrid = myGrd, preProcess = myPrep, 
+                       metric = myMetr, trControl = myCtrl)
+)
+tune.rft2;
+```
+
+#### Gradient Boost
+
+```{r model_gbm_fpass, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+# Third Model: Stochastic Gradient Boost Machine
+# First Pass: Tune Length
+system.time(
+    #Fit a random forest model to the training set. Include Importance and Proximity scores
+    tune.gbm1 <- train(classe ~ ., data = trn.trn, method="gbm", verbose=FALSE,
+                       tuneLength = cntTun, preProcess = myPrep, 
+                       metric = myMetr, trControl = myCtrl)
+)
+tune.gbm1
+```
+
+```{r model_gbm_spass, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+# Third Model: Stochastic Gradient Boost Machine
+# Second Pass: Grid search based on the parameter values selected in the first pass
+myTrees = tune.gbm1$bestTune$n.trees
+MyDepth = tune.gbm1$bestTune$interaction.depth
+myShrnk = tune.gbm1$bestTune$shrinkage
+
+myGrd = expand.grid(n.trees = c(myTrees, myTrees+15, myTrees+30),
+                    interaction.depth = c(MyDepth-1, MyDepth, MyDepth+1),
+                    shrinkage = c(myShrnk-0.025, myShrnk, myShrnk+0.025),
+                    n.minobsinnode = c(tune.gbm1$bestTune$n.minobsinnode))
+
+system.time(
+    # Fit model to the training set.
+    tune.gbm2 <- train(classe ~ ., data = trn.trn, method="gbm", verbose=FALSE,
+                       tuneGrid = myGrd, preProcess = myPrep, 
+                       metric = myMetr, trControl = myCtrl)
+)
+tune.gbm2;
+```
+
+### Tuning Model Accuracy {.tabset .tabset-fade}
 
 After tuning these models we can identify the parameters that generate the best performance per model and compare how well the models perform against each other.
 
-```{r echo=TRUE, eval=TRUE}
-tune.svr; tune.rft
+#### Summary
+
+```{r model_out, echo=TRUE, eval=TRUE, collapse=TRUE}
+mcomp = rbind(getTrainPerf(tune.svr2),
+              getTrainPerf(tune.rft2),
+              getTrainPerf(tune.gbm2))
+
+kable(mcomp)
 ```
 
-The following plots show how well the models do based on the predictor parameters used.
+#### Support Vector
 
-```{r echo=TRUE, eval=TRUE}
-#old.par <- par(mfrow=c(1, 2))
-plot(tune.svr, metric = "Kappa")
-plot(tune.rft, metric = "Kappa")
-#par(old.par)
+```{r model_plot_svm, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=4}
+plot(tune.svr1, metric = "Kappa", main = "First Pass")
+plot(tune.svr2, metric = "Kappa", main = "Second Pass")
+```
 
+#### Random Forest
+
+```{r model_plot_rft, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=4}
+plot(tune.rft1, metric = "Kappa", main = "First Pass")
+plot(tune.rft2, metric = "Kappa", main = "Second Pass")
+```
+
+#### Gradient Boost
+
+```{r model_plot_gbm, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=5, fig.width=5}
+plot(tune.gbm1, metric = "Kappa", main = "First Pass")
+plot(tune.gbm2, metric = "Kappa", main = "Second Pass")
+```
+
+#### Density Plot
+
+```{r model_compare, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=9}
+library(randomForest)
+# Compare Models
+resamps <- resamples(list(
+             SVM.Radial      = tune.svr2,
+             RandomForest    = tune.rft2,
+             GradientBoost   = tune.gbm2
+           ))
+summary(resamps)
+
+# Using Kappa as a more conservative measure for accuracy.
+densityplot(resamps, metric='Kappa', 
+            auto.key=list(space='right', 
+                          trellis.par.set(superpose.line = list(
+                            lwd = 2.5,
+                            lty = 1
+                          ))))
+
+# Compare the lagged differences between the models.
+mdiffs <- diff(resamps)
+summary(mdiffs)
+```
+
+### Fitting the Models {.tabset .tabset-fade}
+
+Now that we have the tuned parameters we select and fit the final models. This is really fast compared to the tuning steps. Although the models perform well individually, we built an ensemble model to hightlight the process and potential benefit to predictive performance. To get additional lift, it is important that the models being stacked have varying variables of importance.
+
+```{r model_pext, echo=TRUE, eval=TRUE, collapse=TRUE}
 # Retrive the training errors for the SVM model
-err.svr <- tune.svr$finalModel@error; err.svr
+err.svr <- tune.svr2$finalModel@error; err.svr
+
 # Retrieve the OOB error for the Random Forest model based on number of trees used
-ntr     <- tune.rft$finalModel$ntree
-err.rft <- tune.rft$finalModel$err.rate[ntr,1]
+ntr     <- tune.rft2$finalModel$ntree; ntr
+err.rft <- tune.rft2$finalModel$err.rate[ntr,1]; err.rft
 
 # Identify the lowest error rate by number of trees
-treerr.df <- as.data.frame(tune.rft$finalModel$err.rate[,1])
+treerr.df <- as.data.frame(tune.rft2$finalModel$err.rate[,1])
 treerr.df$trees <- row(treerr.df)
 colnames(treerr.df) <- c("err","trees")
 
 # Reduce the number of trees for the Random Forest based on error rate
-ntr = as.vector(head(treerr.df[with(treerr.df, order(err)), ], 1)$trees)
-err.rft <- tune.rft$finalModel$err.rate[ntr, 1]; err.rft
+ntr = as.vector(head(treerr.df[with(treerr.df, order(err)), ], 1)$trees); ntr
+err.rft <- tune.rft2$finalModel$err.rate[ntr, 1]; err.rft
 ```
 
-Next we compare the models' performance against each other. The following plots show the density of predictions by error rate, and the relative importance of each model component.
+#### Support Vector
 
-```{r echo=TRUE, eval=TRUE}
-library(randomForest)
-# Compare Models
-resamps <- resamples(list(
-    SVM.Radial      = tune.svr,
-    RandomForest    = tune.rft
-    ))
-summary(resamps)
-# Using Kappa as a more conservative measure for accuracy.
-densityplot(resamps, auto.key=TRUE, metric='Kappa')
-# Compare the lagged differences between the models.
-mdiffs <- diff(resamps)
-summary(mdiffs)
-# Display the variables of importance.
-viv <- order(varImp(tune.rft$finalModel), decreasing = TRUE)
-length(which(viv>0)); viv
-names(trn.dat)[viv]
-```
-
-### Fitting the Models
-
-Now that we have the tuned parameters we select and fit the final model. This process is really fast compared to the tuning of the models. We picked the Radial SVM model because it is faster than the Random Forest and it performs equivalently.
-
-```{r echo=TRUE, eval=TRUE}
+```{r fit_svr, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # Calculate the final model with the tuning parameters from the above.
-newGrid = expand.grid(sigma=c(0.01720171), C=c(128))
+mySig = tune.svr2$bestTune$sigma; mySig
+myCst = tune.svr2$bestTune$C; myCst
+newGrid = expand.grid(sigma=c(mySig), C=c(myCst))
+
 system.time(
     # Fit model to the training set.
-    fit.svr <- train(classe ~ ., data = trn.train, method = "svmRadial", 
+    fit.svr <- train(classe ~ ., data = trn.trn, method = "svmRadial", 
                      tuneGrid = newGrid, 
                      preProcess = myPrep, trControl = myCtrl)
 )
 ```
 
-```{r echo=TRUE, eval=TRUE}
+#### Random Forest
+
+```{r fit_rft, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # Calculate the final model with the tuning parameters from the above.
-newGrid = expand.grid(mtry=c(11))
+ntr
+
+newGrid = expand.grid(mtry=c(tune.rft2$bestTune$mtry))
 system.time(
-    fit.rft <- train(classe ~ ., data = trn.train, method="rf", 
+    fit.rft <- train(classe ~ ., data = trn.trn, method="rf", 
                      tuneGrid = newGrid, ntree = ntr,
                      preProcess = myPrep, trControl = myCtrl)
 )
 ```
 
-```{r echo=TRUE, eval=TRUE}
-fit.svr; fit.rft
+#### Gradient Boost
+
+```{r fit_gbm, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+# Calculate the final model with the tuning parameters from the above.
+myTrees = tune.gbm2$bestTune$n.trees; myTrees
+myDepth = tune.gbm2$bestTune$interaction.depth; myDepth
+myShrnk = tune.gbm2$bestTune$shrinkage; myShrnk
+myMNode = tune.gbm1$bestTune$n.minobsinnode; myMNode
+
+myGrd = expand.grid(n.trees = c(myTrees),
+                    interaction.depth = c(myDepth),
+                    shrinkage = c(myShrnk),
+                    n.minobsinnode = c(myMNode))
+
+system.time(
+    fit.gbm <- train(classe ~ ., data = trn.trn, method="gbm", verbose=FALSE,
+                     tuneGrid = myGrd, preProcess = myPrep, 
+                     metric = myMetr, trControl = myCtrl)
+)
 ```
 
-### Model Analysis and Accuracy
+### Model Analysis and Validation {.tabset .tabset-fade}
 
-The model accuracy on the training data is `r round(fit.svr$results$Accuracy * 100, 1)`%, but on the validation data accuracy is about 99.3%. This indicates that our out of sample error is very good and that we haven't overfit the model.
+During this process we run the tuned models against our validation set to assess performance. This model performance indicates that our out-of-sample error is very good and that we haven't overfit the model.
 
-```{r echo=TRUE, eval=TRUE}
-# Calculate the model accuracy on the training set.
-yhat.svr <- predict(fit.svr, trn.valid)
-confusionMatrix(trn.valid$classe, yhat.svr)
-yhat.rft <- predict(fit.rft, trn.valid)
-confusionMatrix(trn.valid$classe, yhat.rft)
+```{r model_analysis, echo=TRUE, eval=TRUE, collapse=TRUE}
+# Assess the separate model accuracy on the validation set.
+yhat.svr <- predict(fit.svr, trn.vld)
+yhat.rft <- predict(fit.rft, trn.vld)
+yhat.gbm <- predict(fit.gbm, trn.vld)
+
+cm.svr <- confusionMatrix(trn.vld$classe, yhat.svr)
+cm.rft <- confusionMatrix(trn.vld$classe, yhat.rft)
+cm.gbm <- confusionMatrix(trn.vld$classe, yhat.gbm)
 ```
 
-If you need greater model accuracy, you can combine the results of two or more models. The following example demonstrates how you might accomplish this. By including the results of the prior two models, the combined model can generate higher accuracy. In this example, notice that the accuracy and confusion matrix results have improved. Since both of our models produce excellent results, the combined model will not be used and is provided for demonstration only.
+#### Support Vector
 
-```{r echo=TRUE, eval=TRUE}
-pred.df <- data.frame(yhat.svr, yhat.rft, classe=trn.valid$classe)
-fit.comb <- train(classe ~ ., data = pred.df, method="rf")
-yhat.comb <- predict(fit.comb, pred.df)
-confusionMatrix(trn.valid$classe, yhat.comb)
+```{r eval_svr, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+# Confusion Matrix
+kable(cm.svr$table, caption = "Confusion Matrix:")
+# Class Summary
+kable(t(cm.svr$byClass), caption = "Statistics by Class:")
+```
+
+#### Random Forest
+
+```{r eval_rft, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+# Confusion Matrix
+kable(cm.rft$table, caption = "Confusion Matrix:")
+# Class Summary
+kable(t(cm.rft$byClass), caption = "Statistics by Class:")
+```
+
+#### Gradient Boost
+
+```{r eval_gbm, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+# Confusion Matrix
+kable(cm.gbm$table, caption = "Confusion Matrix:")
+# Class Summary
+kable(t(cm.gbm$byClass), caption = "Statistics by Class:")
+```
+
+### Ensemble (Stack) Model {.tabset .tabset-fade}
+
+Next we stack the seperate model algorithms into an ensemble model. Different algorithms will find some variables more significant than other vaiables, and will rank that significance differently. This shows up in the variables of importances (see below). The ensemble model is able to capitalize on those differences to boost overall predictive performance. After we fit the separate models to our validation set, we can train the ensemble model. Then we can assess the model performance against our test set. This "stacked" model should generate increased predictive accuracy.
+
+```{r model_stack, echo=TRUE, eval=TRUE, collapse=TRUE}
+set.seed(123)
+# Create dataframe with the predictions of the separate models, combined with the classe variable (from the validation set)
+# in preparation for training the ensemble model against the "validation" data.
+pred.vld <- data.frame(yhat.svr, yhat.rft, yhat.gbm, classe=trn.vld$classe)
+
+# Train the ensemble model on the "stacked" predictors
+# Note: since it was the fastest of the trio, the SVM algorithm used to build the ensemble
+fit.stack <- train(classe ~ ., data=pred.vld, method="svmRadial",
+                   metric = myMetr, trControl = myCtrl)
+
+# Compare the ensemble model training performance to the separate models.
+rbind(getTrainPerf(fit.stack),
+      getTrainPerf(fit.svr),
+      getTrainPerf(fit.rft),
+      getTrainPerf(fit.gbm))
+
+# To test the ensemble performance we create "stacked" predictors based
+# on the test set for ensemble prediction assessment.
+yhat.svr <- predict(fit.svr, trn.tst)
+yhat.rft <- predict(fit.rft, trn.tst)
+yhat.gbm <- predict(fit.gbm, trn.tst)
+
+# Create "stacked" dataframe of modelled predicters and the classe variable (from the test set)
+# in preparation for training the ensemble model against the "test" data.
+pred.tst <- data.frame(yhat.svr, yhat.rft, yhat.gbm, classe=trn.tst$classe)
+
+# Predict the model classe variable using the "stacked" predictors
+yhat.stk <- predict(fit.stack, pred.tst)
+
+# Compare the predicted class against the actual class variable.
+cm.stk <- confusionMatrix(trn.tst$classe, yhat.stk)
+
+# Assess how the ensemble gets higher accuracy
+# Compare combined predictor accuracy to the producer’s accuracy (aka sensitivity or recall) for the classes
+pred.acc <- rbind(confusionMatrix(yhat.svr, trn.tst$classe)$byClass[, 1],
+                  confusionMatrix(yhat.rft, trn.tst$classe)$byClass[, 1],
+                  confusionMatrix(yhat.gbm, trn.tst$classe)$byClass[, 1],
+                  confusionMatrix(yhat.stk, trn.tst$classe)$byClass[, 1])
+row.names(pred.acc) <- c("SVM.Radial", "RandomForest", "GradientBoost", "Stack")
+
+pred.acc
+
+```
+
+#### Variables of Importance
+
+Below are the top 10 GBM variables in comparison to the other models (100=most important; 0=least important). Notice how the variables of importance vary across models.
+
+```{r variable_import, echo=TRUE, eval=TRUE, collapse=TRUE}
+# Compare the variables of importance.
+viv = cbind(varImp(tune.gbm2, scale = TRUE)$importance,
+            varImp(tune.rft2, scale = TRUE)$importance,
+            varImp(tune.svr2, scale = TRUE)$importance)
+colnames(viv)[1] = "Gradient_Boost"
+colnames(viv)[2] = "Random_Forest"
+colnames(viv)[3:7] = c("SVM-A","SVM-B","SVM-C","SVM-D","SVM-E")
+
+kable(head(viv[with(viv, order(-Gradient_Boost)), ], 10),
+      digits = 2)
+```
+
+#### Density Plots
+
+Although the Gradient Boost model doesn't perform as well as the other separate models, the stacked model is able to learn from it's variance to boost performance over all of the separate models. 
+
+```{r finale_dplot, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=9}
+results <- resamples(list(
+             SVM.Radial     = fit.svr,
+             Random.Forest  = fit.rft,
+             Gradient.Boost = fit.gbm,
+             Ensemble.Stack = fit.stack
+           ))
+# Summarize the ensemble results
+summary(results)
+# check if model predicotrs are fairly un-correlated (< 0.75)
+modelCor(results)
+lapply(fit.stack, summary)
+
+# Using Kappa as a more conservative measure for accuracy.
+densityplot(results, metric='Kappa', 
+            auto.key=list(space='right', 
+                          trellis.par.set(superpose.line = list(
+                            lwd = 2.5,
+                            lty = 1
+                          ))))
+```
+
+#### Box Plots
+
+```{r finale_bplot, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=8}
+# box and whisker plots to compare models
+scales <- list(x=list(relation="free"), y=list(relation="free"))
+bwplot(results, scales=scales)
+#bwplot(results, metric="ROC")
+```
+
+#### Confusion Matrix
+
+```{r eval_stk, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+# Confusion Matrix
+kable(cm.stk$table, caption = "Confusion Matrix:")
+# Class Summary
+#kable(t(cm.stk$byClass), caption = "Statistics by Class:")
 ```
 
 ## Conclusion
 
-After building the final model and testing it on our validation set, we apply it to the test set to confirm our prediction accuracy. Our model had a 100% match prediction on the test set. The final output will be applied to our Coursera project submission for grading.
+The ensemble model's training accuracy (`r round(getTrainPerf(fit.stack)$TrainAccuracy * 100, 2)`%) shows a `r round((getTrainPerf(fit.stack)$TrainAccuracy - getTrainPerf(fit.svr)$TrainAccuracy) * 100, 2)`% predictive improvement over the SVM model (`r round(getTrainPerf(fit.svr)$TrainAccuracy * 100, 2)`%). Against the test data, the ensemble model accuracy (`r round(confusionMatrix(trn.tst$classe, yhat.stk)[[3]]["Accuracy"] * 100, 2)`%) is similar to the training accuracy. This means that the model is well generalized and therefore not overfit to the training data. Let's see how it compares to the separate models on the test data:
 
-```{r echo=TRUE, eval=TRUE}
-trn.tst = read.csv(tstFile, na.strings=c("NA","NaN", "", " "), stringsAsFactors=FALSE)
-tst.pred <- predict(fit.svr, trn.tst); tst.pred
+* SVM-Radial: `r round(confusionMatrix(trn.tst$classe, yhat.svr)[[3]]["Accuracy"] * 100, 2)`%
+* Random Forest: `r round(confusionMatrix(trn.tst$classe, yhat.rft)[[3]]["Accuracy"] * 100, 2)`%
+* Gradient Boost: `r round(confusionMatrix(trn.tst$classe, yhat.gbm)[[3]]["Accuracy"] * 100, 2)`%
+
+Although the ensemble model performs better overall, it's performance by class variable is better as well. Look at the performance by class below:
+
+```{r stats_stk, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+# Class Summary
+kable(t(cm.stk$byClass), caption = "Statistics by Class:")
 ```
 
-```{r echo=TRUE, eval=TRUE}
+```{r model_predict, echo=FALSE, eval=FALSE, collapse=TRUE}
+#After building the final model and testing it on our validation and test sets, we apply it to the final test file to confirm our prediction accuracy. Our model had a 100% match prediction on the test file. The final output will be applied to our Coursera project submission for grading.
+
+# Final assessment of class file.
+# Load the test file
+trn.fin = read.csv(tstFile, na.strings=c("NA","NaN", "", " "), stringsAsFactors=FALSE)
+
+# Generate the stack values
+yhat.svr <- predict(fit.svr, trn.fin)
+yhat.rft <- predict(fit.rft, trn.fin)
+yhat.gbm <- predict(fit.gbm, trn.fin)
+
+# Create the stacked dataframe
+pred.fin <- data.frame(yhat.svr, yhat.rft, yhat.gbm)
+
+# Predict the ensemble model results
+fin.pred <- predict(fit.stack, pred.fin); fin.pred
+```
+
+```{r model_conclude, echo=FALSE, eval=FALSE, collapse=TRUE}
 # Output Results
 library(stringr)
-for(x in 1:length(tst.pred)) {
+for(x in 1:length(fin.pred)) {
     filename = paste0("data/problem_id_", str_pad(x, 2, pad = "0" ), ".txt")
-    write.table(tst.pred[x], file=filename, 
+    write.table(fin.pred[x], file=filename, 
                 quote=FALSE, row.names=FALSE, col.names=FALSE)
 }
 ```
@@ -303,4 +801,10 @@ for(x in 1:length(tst.pred)) {
 [3]: http://www.openblas.net/
 [4]: https://en.wikipedia.org/wiki/Radial_basis_function_kernel
 [5]: https://en.wikipedia.org/wiki/Random_forest
-
+[6]: https://beckmw.wordpress.com/2013/02/05/collinearity-and-stepwise-vif-selection/
+[7]: https://en.wikipedia.org/wiki/Gradient_boosting
+[8]: https://en.wikipedia.org/wiki/Ensemble_learning
+[9]: https://en.wikipedia.org/wiki/Partial_least_squares_regression
+[10]: https://en.wikipedia.org/wiki/Principal_component_analysis
+[11]: http://blog.minitab.com/blog/applying-statistics-in-quality-projects/how-could-you-benefit-from-a-box-cox-transformation
+[12]: https://en.wikipedia.org/wiki/Variance_inflation_factor
