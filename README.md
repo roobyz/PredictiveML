@@ -1,7 +1,5 @@
 # PredictiveML
 
-## Summary
-
 This project leverages machine learning algorithms to create a model that distinguishes between fitness participants that have completed exercises correctly versus those that haven’t and what their mistakes were. This model will assess how accurately we can classify the exercises performed by non-participants solely based on their Human Activity Recognition (HAR) data.
 
 Direct access to the project results are available through rawgit:

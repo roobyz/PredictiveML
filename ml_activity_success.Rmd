@@ -678,17 +678,6 @@ yhat.stk <- predict(fit.stack, pred.tst)
 
 # Compare the predicted class against the actual class variable.
 cm.stk <- confusionMatrix(trn.tst$classe, yhat.stk)
-
-# Assess how the ensemble gets higher accuracy
-# Compare combined predictor accuracy to the producer’s accuracy (aka sensitivity or recall) for the classes
-pred.acc <- rbind(confusionMatrix(yhat.svr, trn.tst$classe)$byClass[, 1],
-                  confusionMatrix(yhat.rft, trn.tst$classe)$byClass[, 1],
-                  confusionMatrix(yhat.gbm, trn.tst$classe)$byClass[, 1],
-                  confusionMatrix(yhat.stk, trn.tst$classe)$byClass[, 1])
-row.names(pred.acc) <- c("SVM.Radial", "RandomForest", "GradientBoost", "Stack")
-
-pred.acc
-
 ```
 
 #### Variables of Importance
@@ -743,13 +732,13 @@ bwplot(results, scales=scales)
 #bwplot(results, metric="ROC")
 ```
 
-#### Confusion Matrix
+#### Statistics
 
 ```{r eval_stk, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # Confusion Matrix
 kable(cm.stk$table, caption = "Confusion Matrix:")
 # Class Summary
-#kable(t(cm.stk$byClass), caption = "Statistics by Class:")
+kable(t(cm.stk$byClass), caption = "Statistics by Class:")
 ```
 
 ## Conclusion
@@ -760,11 +749,20 @@ The ensemble model's training accuracy (`r round(getTrainPerf(fit.stack)$TrainAc
 * Random Forest: `r round(confusionMatrix(trn.tst$classe, yhat.rft)[[3]]["Accuracy"] * 100, 2)`%
 * Gradient Boost: `r round(confusionMatrix(trn.tst$classe, yhat.gbm)[[3]]["Accuracy"] * 100, 2)`%
 
-Although the ensemble model performs better overall, it's performance by class variable is better as well. Look at the performance by class below:
+Although the ensemble model performs better overall, it's performance by class variable has improved as well:
 
 ```{r stats_stk, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+# Assess how the ensemble gets higher accuracy
+# Compare combined predictor accuracy to the producer’s accuracy (aka sensitivity or recall) for the classes
+pred.acc <- rbind(confusionMatrix(yhat.svr, trn.tst$classe)$byClass[, 1],
+                  confusionMatrix(yhat.rft, trn.tst$classe)$byClass[, 1],
+                  confusionMatrix(yhat.gbm, trn.tst$classe)$byClass[, 1],
+                  confusionMatrix(yhat.stk, trn.tst$classe)$byClass[, 1])
+row.names(pred.acc) <- c("SVM.Radial", "Random.Forest", "Gradient.Boost", "Ensemble.Stack")
+
 # Class Summary
-kable(t(cm.stk$byClass), caption = "Statistics by Class:")
+kable(pred.acc, caption = "Predictive Accuracy by Class:")
+
 ```
 
 ```{r model_predict, echo=FALSE, eval=FALSE, collapse=TRUE}
