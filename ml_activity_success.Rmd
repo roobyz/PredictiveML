@@ -100,11 +100,11 @@ rm("cnt.min", "col.drops", "col.keep", "col.names", "col.nrel", "col.nzvs", "fld
 
 # Cutoff parameters
 corrRt = 0.80 # Correlation Cutoff 
-dSplit = 0.70 # Training Cutoff
+dSplit = 0.60 # Training Cutoff
 
 ## Set model parameters for model tuning and training
 cntFld = 8    # Number of cross-validation folds
-cntRpt = 3    # Increase the Repeat count for improved cross-validation accuracy
+cntRpt = 4    # Increase the Repeat count for improved cross-validation accuracy
 cntTun = 5    # Parameter for tuning accuracy vs resource consumption
 ```
 
@@ -335,7 +335,7 @@ Using our final training set, we tune our models. Since this process can be very
 
 ```{r model_params, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, collapse=TRUE}
 # Partition the data with training, validation, and test sets.
-set.seed(123)
+set.seed(1732)
 inTrain <- createDataPartition(y=trn.dat$classe, p=dSplit, list=FALSE)
 trn.trn <- trn.dat[ inTrain,]
 trn.vld <- trn.dat[-inTrain,]
@@ -367,9 +367,11 @@ rm("i", "cntFld", "cntRpt", "inTrain", "corrMatx", "vif_func")
 
 There are two ways to tune an algorithm using the Caret R package. The first, allow the system to do it automatically by setting the `tuneLength` parameter to indicate the number of different values to try for each algorithm parameter. This makes a crude guess on what values to try, but can quickly get you in a reasonable range. This is the approach we've taken on our first tuning pass. The second approach involves manually setting the tuning grid to search. Our second tuning pass uses this approach. We start with the best performaning parameters from the first tuning pass and create a more focused tuning grid to further refine our parameters.
 
-We have selected three models to tune: 1) Support Vector Machine (SVM) with a [Radial Basis Function (RBF) kernel][4], 2) [RandomForest][5], and 3) [Stochastic Gradient Boost Machine][7]. To improve SVM accuracy we doubled the tune length for this model. For good measure, we also include an [Ensemble][8] model of the three algorithms to obtain better predictive performance.
+We have selected three models to tune: 1) Support Vector Machine (SVM) with a [Radial Basis Function (RBF) kernel][4], 2) [RandomForest][5], and 3) [Stochastic Gradient Boost Machine][7]. To improve SVM performance we doubled its grid-search area. For good measure, we also create an [Ensemble][8] (Stack) model using the three separate algorithms to obtain better performance overall.
 
 #### SVM Passes
+
+First-pass Logic:
 
 ```{r model_svr_fpass, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # First Model: Radial Support Vector Machine
@@ -382,6 +384,8 @@ system.time(
 )
 tune.svr1;
 ```
+
+Second-pass Logic:
 
 ```{r model_svr_spass, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # First Model: Radial Support Vector Machine
@@ -402,6 +406,8 @@ tune.svr2;
 
 #### Random Forest
 
+First-pass Logic:
+
 ```{r model_rft_fpass, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # Second Model: Random Forest Model (Extension to Bagging where Trees represent 
 #               Bootstrap samples with Bootstrap nodes)
@@ -415,6 +421,8 @@ system.time(
 )
 tune.rft1
 ```
+
+Second-pass Logic:
 
 ```{r model_rft_spass, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # Second Model: Random Forest Model (Extension to Bagging where Trees represent 
@@ -434,6 +442,8 @@ tune.rft2;
 
 #### Gradient Boost
 
+First-pass Logic:
+
 ```{r model_gbm_fpass, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # Third Model: Stochastic Gradient Boost Machine
 # First Pass: Tune Length
@@ -446,6 +456,8 @@ system.time(
 tune.gbm1
 ```
 
+Second-pass Logic:
+
 ```{r model_gbm_spass, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # Third Model: Stochastic Gradient Boost Machine
 # Second Pass: Grid search based on the parameter values selected in the first pass
@@ -453,9 +465,9 @@ myTrees = tune.gbm1$bestTune$n.trees
 MyDepth = tune.gbm1$bestTune$interaction.depth
 myShrnk = tune.gbm1$bestTune$shrinkage
 
-myGrd = expand.grid(n.trees = c(myTrees, myTrees+15, myTrees+30),
-                    interaction.depth = c(MyDepth-1, MyDepth, MyDepth+1),
-                    shrinkage = c(myShrnk-0.025, myShrnk, myShrnk+0.025),
+myGrd = expand.grid(n.trees = c(myTrees+150, myTrees+200),
+                    interaction.depth = c(MyDepth+2, MyDepth+3),
+                    shrinkage = c(myShrnk+0.075, myShrnk+0.1),
                     n.minobsinnode = c(tune.gbm1$bestTune$n.minobsinnode))
 
 system.time(
@@ -508,9 +520,9 @@ plot(tune.gbm2, metric = "Kappa", main = "Second Pass")
 library(randomForest)
 # Compare Models
 resamps <- resamples(list(
-             SVM.Radial      = tune.svr2,
-             RandomForest    = tune.rft2,
-             GradientBoost   = tune.gbm2
+             SVM.Radial     = tune.svr2,
+             Random.Forest  = tune.rft2,
+             Gradient.Boost = tune.gbm2
            ))
 summary(resamps)
 
@@ -610,9 +622,9 @@ yhat.svr <- predict(fit.svr, trn.vld)
 yhat.rft <- predict(fit.rft, trn.vld)
 yhat.gbm <- predict(fit.gbm, trn.vld)
 
-cm.svr <- confusionMatrix(trn.vld$classe, yhat.svr)
-cm.rft <- confusionMatrix(trn.vld$classe, yhat.rft)
-cm.gbm <- confusionMatrix(trn.vld$classe, yhat.gbm)
+cm.svr <- confusionMatrix(yhat.svr, trn.vld$classe)
+cm.rft <- confusionMatrix(yhat.rft, trn.vld$classe)
+cm.gbm <- confusionMatrix(yhat.gbm, trn.vld$classe)
 ```
 
 #### Support Vector
@@ -647,8 +659,8 @@ kable(t(cm.gbm$byClass), caption = "Statistics by Class:")
 Next we stack the seperate model algorithms into an ensemble model. Different algorithms will find some variables more significant than other vaiables, and will rank that significance differently. This shows up in the variables of importances (see below). The ensemble model is able to capitalize on those differences to boost overall predictive performance. After we fit the separate models to our validation set, we can train the ensemble model. Then we can assess the model performance against our test set. This "stacked" model should generate increased predictive accuracy.
 
 ```{r model_stack, echo=TRUE, eval=TRUE, collapse=TRUE}
-set.seed(123)
-# Create dataframe with the predictions of the separate models, combined with the classe variable (from the validation set)
+set.seed(1732)
+# Dataframe with predictions of the separate models, combined with the classe variable (from the validation set)
 # in preparation for training the ensemble model against the "validation" data.
 pred.vld <- data.frame(yhat.svr, yhat.rft, yhat.gbm, classe=trn.vld$classe)
 
@@ -677,7 +689,8 @@ pred.tst <- data.frame(yhat.svr, yhat.rft, yhat.gbm, classe=trn.tst$classe)
 yhat.stk <- predict(fit.stack, pred.tst)
 
 # Compare the predicted class against the actual class variable.
-cm.stk <- confusionMatrix(trn.tst$classe, yhat.stk)
+cm.stk <- confusionMatrix(yhat.stk, trn.tst$classe)
+str(cm.stk$byClass)
 ```
 
 #### Variables of Importance
@@ -697,6 +710,21 @@ kable(head(viv[with(viv, order(-Gradient_Boost)), ], 10),
       digits = 2)
 ```
 
+#### Model Correlation
+
+Similar to searching for multicolinearity in the predictors of the separate models, we need to check if modelled predictors are fairly un-correlated. Ideally, the modelled predictors should have less than 75% correlation.
+
+```{r finale_mcoor, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=9}
+results <- resamples(list(
+             SVM.Radial     = fit.svr,
+             Random.Forest  = fit.rft,
+             Gradient.Boost = fit.gbm
+           ))
+
+# check if model predicotrs are fairly un-correlated (< 0.75)
+kable(modelCor(results), caption = "Model Correlation Matrix:")
+```
+
 #### Density Plots
 
 Although the Gradient Boost model doesn't perform as well as the other separate models, the stacked model is able to learn from it's variance to boost performance over all of the separate models. 
@@ -708,10 +736,9 @@ results <- resamples(list(
              Gradient.Boost = fit.gbm,
              Ensemble.Stack = fit.stack
            ))
+
 # Summarize the ensemble results
 summary(results)
-# check if model predicotrs are fairly un-correlated (< 0.75)
-modelCor(results)
 lapply(fit.stack, summary)
 
 # Using Kappa as a more conservative measure for accuracy.
@@ -732,9 +759,9 @@ bwplot(results, scales=scales)
 #bwplot(results, metric="ROC")
 ```
 
-#### Statistics
+#### Per-Class Statistics
 
-```{r eval_stk, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+```{r eval_stk, echo=TRUE, eval=TRUE, collapse=TRUE}
 # Confusion Matrix
 kable(cm.stk$table, caption = "Confusion Matrix:")
 # Class Summary
@@ -743,26 +770,25 @@ kable(t(cm.stk$byClass), caption = "Statistics by Class:")
 
 ## Conclusion
 
-The ensemble model's training accuracy (`r round(getTrainPerf(fit.stack)$TrainAccuracy * 100, 2)`%) shows a `r round((getTrainPerf(fit.stack)$TrainAccuracy - getTrainPerf(fit.svr)$TrainAccuracy) * 100, 2)`% predictive improvement over the SVM model (`r round(getTrainPerf(fit.svr)$TrainAccuracy * 100, 2)`%). Against the test data, the ensemble model accuracy (`r round(confusionMatrix(trn.tst$classe, yhat.stk)[[3]]["Accuracy"] * 100, 2)`%) is similar to the training accuracy. This means that the model is well generalized and therefore not overfit to the training data. Let's see how it compares to the separate models on the test data:
+The ensemble model's training accuracy (`r round(getTrainPerf(fit.stack)$TrainAccuracy * 100, 2)`%) shows a `r round((getTrainPerf(fit.stack)$TrainAccuracy - getTrainPerf(fit.svr)$TrainAccuracy) * 100, 2)`% predictive improvement over the SVM model (`r round(getTrainPerf(fit.svr)$TrainAccuracy * 100, 2)`%). Against the test data, the ensemble model accuracy (`r round(confusionMatrix(yhat.stk, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%) has similar performance. This means that the model is well generalized and therefore not overfit to the training data. Let's see how it compares to the separate models on the test data:
 
-* SVM-Radial: `r round(confusionMatrix(trn.tst$classe, yhat.svr)[[3]]["Accuracy"] * 100, 2)`%
-* Random Forest: `r round(confusionMatrix(trn.tst$classe, yhat.rft)[[3]]["Accuracy"] * 100, 2)`%
-* Gradient Boost: `r round(confusionMatrix(trn.tst$classe, yhat.gbm)[[3]]["Accuracy"] * 100, 2)`%
+* SVM-Radial: `r round(confusionMatrix(yhat.svr, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
+* Random Forest: `r round(confusionMatrix(yhat.rft, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
+* Gradient Boost: `r round(confusionMatrix(yhat.gbm, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
 
-Although the ensemble model performs better overall, it's performance by class variable has improved as well:
+In addition to better overall performance, the ensemble model has per-class performance that is equal-to or better than the separate models:
 
-```{r stats_stk, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+```{r stats_stk, echo=TRUE, eval=TRUE, collapse=TRUE}
 # Assess how the ensemble gets higher accuracy
 # Compare combined predictor accuracy to the producer’s accuracy (aka sensitivity or recall) for the classes
-pred.acc <- rbind(confusionMatrix(yhat.svr, trn.tst$classe)$byClass[, 1],
-                  confusionMatrix(yhat.rft, trn.tst$classe)$byClass[, 1],
-                  confusionMatrix(yhat.gbm, trn.tst$classe)$byClass[, 1],
-                  confusionMatrix(yhat.stk, trn.tst$classe)$byClass[, 1])
-row.names(pred.acc) <- c("SVM.Radial", "Random.Forest", "Gradient.Boost", "Ensemble.Stack")
+pred.perf <- rbind(confusionMatrix(yhat.svr, trn.tst$classe)$byClass[, 7],
+                   confusionMatrix(yhat.rft, trn.tst$classe)$byClass[, 7],
+                   confusionMatrix(yhat.gbm, trn.tst$classe)$byClass[, 7],
+                   confusionMatrix(yhat.stk, trn.tst$classe)$byClass[, 7])
+row.names(pred.perf) <- c("SVM.Radial", "Random.Forest", "Gradient.Boost", "Ensemble.Stack")
 
 # Class Summary
-kable(pred.acc, caption = "Predictive Accuracy by Class:")
-
+kable(pred.perf, caption = "Per-class Weigthed Average of Precision and Recall (F-1):")
 ```
 
 ```{r model_predict, echo=FALSE, eval=FALSE, collapse=TRUE}
