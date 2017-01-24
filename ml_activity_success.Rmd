@@ -656,7 +656,9 @@ kable(t(cm.gbm$byClass), caption = "Statistics by Class:")
 
 ### Ensemble (Stack) Model {.tabset .tabset-fade}
 
-Next we stack the seperate model algorithms into an ensemble model. Different algorithms will find some variables more significant than other vaiables, and will rank that significance differently. This shows up in the variables of importances (see below). The ensemble model is able to capitalize on those differences to boost overall predictive performance. After we fit the separate models to our validation set, we can train the ensemble model. Then we can assess the model performance against our test set. This "stacked" model should generate increased predictive accuracy.
+Different algorithms will find some variables more predictve than others, and will rank them differently. This shows up in the variables of importances (see below). The ensemble model is able to capitalize on those differences to boost predictive performance. 
+
+After fitting the separate models to our validation set, we created modelled predictors so that we can train the ensemble model. Then we assess the model performance against our test set. This "stacked" model should have improved predictive performance over the separate models.
 
 ```{r model_stack, echo=TRUE, eval=TRUE, collapse=TRUE}
 set.seed(1732)
@@ -770,7 +772,7 @@ kable(t(cm.stk$byClass), caption = "Statistics by Class:")
 
 ## Conclusion
 
-The ensemble model's training accuracy (`r round(getTrainPerf(fit.stack)$TrainAccuracy * 100, 2)`%) shows a `r round((getTrainPerf(fit.stack)$TrainAccuracy - getTrainPerf(fit.svr)$TrainAccuracy) * 100, 2)`% predictive improvement over the SVM model (`r round(getTrainPerf(fit.svr)$TrainAccuracy * 100, 2)`%). Against the test data, the ensemble model accuracy (`r round(confusionMatrix(yhat.stk, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%) has similar performance. This means that the model is well generalized and therefore not overfit to the training data. Let's see how it compares to the separate models on the test data:
+The ensemble model's training accuracy (`r round(getTrainPerf(fit.stack)$TrainAccuracy * 100, 2)`%) shows a `r round((getTrainPerf(fit.stack)$TrainAccuracy - getTrainPerf(fit.svr)$TrainAccuracy) * 100, 2)`% predictive improvement over the SVM model (`r round(getTrainPerf(fit.svr)$TrainAccuracy * 100, 2)`%). Against the test data, the ensemble model has similar performance (`r round(confusionMatrix(yhat.stk, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%). This means that the model is well generalized and therefore not overfit to the training data. Let's see how it compares to the separate models on the test data:
 
 * SVM-Radial: `r round(confusionMatrix(yhat.svr, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
 * Random Forest: `r round(confusionMatrix(yhat.rft, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%

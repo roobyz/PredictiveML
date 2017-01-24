@@ -1950,7 +1950,8 @@ cm.gbm &lt;-<span class="st"> </span><span class="kw">confusionMatrix</span>(yha
 </div>
 <div id="ensemble-stack-model" class="section level3 tabset tabset-fade">
 <h3>Ensemble (Stack) Model</h3>
-<p>Next we stack the seperate model algorithms into an ensemble model. Different algorithms will find some variables more significant than other vaiables, and will rank that significance differently. This shows up in the variables of importances (see below). The ensemble model is able to capitalize on those differences to boost overall predictive performance. After we fit the separate models to our validation set, we can train the ensemble model. Then we can assess the model performance against our test set. This “stacked” model should generate increased predictive accuracy.</p>
+<p>Different algorithms will find some variables more predictve than others, and will rank them differently. This shows up in the variables of importances (see below). The ensemble model is able to capitalize on those differences to boost predictive performance.</p>
+<p>After fitting the separate models to our validation set, we created modelled predictors so that we can train the ensemble model. Then we assess the model performance against our test set. This “stacked” model should have improved predictive performance over the separate models.</p>
 <div class="sourceCode"><pre class="sourceCode r"><code class="sourceCode r"><span class="kw">set.seed</span>(<span class="dv">1732</span>)
 <span class="co"># Dataframe with predictions of the separate models, combined with the classe variable (from the validation set)</span>
 <span class="co"># in preparation for training the ensemble model against the &quot;validation&quot; data.</span>
@@ -2597,7 +2598,7 @@ scales &lt;-<span class="st"> </span><span class="kw">list</span>(<span class="d
 </div>
 <div id="conclusion" class="section level2">
 <h2>Conclusion</h2>
-<p>The ensemble model’s training accuracy (98.62%) shows a 0.41% predictive improvement over the SVM model (98.21%). Against the test data, the ensemble model accuracy (98.42%) has similar performance. This means that the model is well generalized and therefore not overfit to the training data. Let’s see how it compares to the separate models on the test data:</p>
+<p>The ensemble model’s training accuracy (98.62%) shows a 0.41% predictive improvement over the SVM model (98.21%). Against the test data, the ensemble model has similar performance (98.42%). This means that the model is well generalized and therefore not overfit to the training data. Let’s see how it compares to the separate models on the test data:</p>
 <ul>
 <li>SVM-Radial: 98.37%</li>
 <li>Random Forest: 97.55%</li>
