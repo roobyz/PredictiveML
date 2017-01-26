@@ -56,7 +56,7 @@ library(doMC)
 library(ggplot2)
 
 # Define number of parallel processes
-registerDoMC(cores = 4)
+registerDoMC(cores = 8)
 
 # Load the training file
 trn.dat = read.csv(trnFile, na.strings=c("NA","NaN", "", " "), stringsAsFactors=FALSE); rm("trnFile")
@@ -284,7 +284,7 @@ kable(corrTabl, digits = 4, align = 'r', format='markdown')
 
 #### PCA Correlation Matrix
 
-For maximum reduction of multicollinearity, this approach transforms all the variables into princicple components. Notice how we eliminated all multicollinearity. The only real challenge with this approach, is that it becomes less intuitive in understanding what drives the model.
+For maximum reduction of multicollinearity, this approach transforms all the variables into princicple components. Notice how we eliminated all multicollinearity. The only real challenge with this approach, is that it becomes <u>less intuitive</u> in understanding and describing what drives the model.
 
 ```{r setup_collinearity_pca, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, cache=TRUE, collapse=TRUE}
 # Identify all the variables
@@ -367,7 +367,7 @@ rm("i", "cntFld", "cntRpt", "inTrain", "corrMatx", "vif_func")
 
 There are two ways to tune an algorithm using the Caret R package. The first, allow the system to do it automatically by setting the `tuneLength` parameter to indicate the number of different values to try for each algorithm parameter. This makes a crude guess on what values to try, but can quickly get you in a reasonable range. This is the approach we've taken on our first tuning pass. The second approach involves manually setting the tuning grid to search. Our second tuning pass uses this approach. We start with the best performaning parameters from the first tuning pass and create a more focused tuning grid to further refine our parameters.
 
-We have selected three models to tune: 1) Support Vector Machine (SVM) with a [Radial Basis Function (RBF) kernel][4], 2) [RandomForest][5], and 3) [Stochastic Gradient Boost Machine][7]. To improve SVM performance we doubled its grid-search area. For good measure, we also create an [Ensemble][8] (Stack) model using the three separate algorithms to obtain better performance overall.
+We have selected three models to tune: 1) Support Vector Machine (SVM) with a [Radial Basis Function (RBF) kernel][4], 2) [RandomForest][5], and 3) [Stochastic Gradient Boost Machine][7]. To improve SVM performance we doubled its grid-search area. Also, since the GBM algorithm is computational expensive, we did signficant [manual tuning][13] to attain good perforamnce. For good measure, we also create an [Ensemble][8] (Stack) model using the three separate algorithms to improve overall performance.
 
 #### SVM Passes
 
@@ -428,8 +428,8 @@ Second-pass Logic:
 # Second Model: Random Forest Model (Extension to Bagging where Trees represent 
 #               Bootstrap samples with Bootstrap nodes)
 # Second Pass: Grid search based on the parameter values selected in the first pass
-myMtry = max(3, tune.rft1$bestTune$mtry)
-myGrd = expand.grid(mtry = c(myMtry-2, myMtry-1, myMtry, myMtry+1, myMtry+2))
+myMtry = max(2, tune.rft1$bestTune$mtry)
+myGrd = expand.grid(mtry = c(myMtry-1, myMtry, myMtry+1))
 
 system.time(
     # Fit model to the training set.
@@ -461,14 +461,19 @@ Second-pass Logic:
 ```{r model_gbm_spass, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # Third Model: Stochastic Gradient Boost Machine
 # Second Pass: Grid search based on the parameter values selected in the first pass
-myTrees = tune.gbm1$bestTune$n.trees
-MyDepth = tune.gbm1$bestTune$interaction.depth
-myShrnk = tune.gbm1$bestTune$shrinkage
+myTrees = tune.gbm1$bestTune$n.trees; myTrees
+myDepth = tune.gbm1$bestTune$interaction.depth; myDepth
+myMinob = tune.gbm1$bestTune$n.minobsinnode; myMinob
 
-myGrd = expand.grid(n.trees = c(myTrees+150, myTrees+200),
-                    interaction.depth = c(MyDepth+2, MyDepth+3),
-                    shrinkage = c(myShrnk+0.075, myShrnk+0.1),
-                    n.minobsinnode = c(tune.gbm1$bestTune$n.minobsinnode))
+# Lower learning rates are preferred, however require a higher number of trees to
+# model all the relationships and would be computationally expensive.
+# Note: higher values of the following parameters may lead to overfitting:
+# * Depth (5-8) should be chosen based on the number of observations and predictors. 
+# * Shrinkage (0.05-0.2) controls the learning rate.
+myGrd = expand.grid(n.trees = c(myTrees+1199),
+                    interaction.depth = c(myDepth-1, myDepth, myDepth+1),
+                    shrinkage = c(0.08),
+                    n.minobsinnode = c(15))
 
 system.time(
     # Fit model to the training set.
@@ -495,21 +500,21 @@ kable(mcomp)
 
 #### Support Vector
 
-```{r model_plot_svm, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=4}
+```{r model_plot_svm, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=7}
 plot(tune.svr1, metric = "Kappa", main = "First Pass")
 plot(tune.svr2, metric = "Kappa", main = "Second Pass")
 ```
 
 #### Random Forest
 
-```{r model_plot_rft, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=4}
+```{r model_plot_rft, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=7}
 plot(tune.rft1, metric = "Kappa", main = "First Pass")
 plot(tune.rft2, metric = "Kappa", main = "Second Pass")
 ```
 
 #### Gradient Boost
 
-```{r model_plot_gbm, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=5, fig.width=5}
+```{r model_plot_gbm, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=7}
 plot(tune.gbm1, metric = "Kappa", main = "First Pass")
 plot(tune.gbm2, metric = "Kappa", main = "Second Pass")
 ```
@@ -520,19 +525,18 @@ plot(tune.gbm2, metric = "Kappa", main = "Second Pass")
 library(randomForest)
 # Compare Models
 resamps <- resamples(list(
-             SVM.Radial     = tune.svr2,
-             Random.Forest  = tune.rft2,
-             Gradient.Boost = tune.gbm2
+             '1.SVM.Radial'     = tune.svr2,
+             '2.Random.Forest'  = tune.rft2,
+             '3.Gradient.Boost' = tune.gbm2
            ))
 summary(resamps)
 
 # Using Kappa as a more conservative measure for accuracy.
 densityplot(resamps, metric='Kappa', 
             auto.key=list(space='right', 
-                          trellis.par.set(superpose.line = list(
-                            lwd = 2.5,
-                            lty = 1
-                          ))))
+                          trellis.par.set(superpose.line = list(lwd = 2.5, lty = 1))
+                          )
+            )
 
 # Compare the lagged differences between the models.
 mdiffs <- diff(resamps)
@@ -598,7 +602,7 @@ system.time(
 myTrees = tune.gbm2$bestTune$n.trees; myTrees
 myDepth = tune.gbm2$bestTune$interaction.depth; myDepth
 myShrnk = tune.gbm2$bestTune$shrinkage; myShrnk
-myMNode = tune.gbm1$bestTune$n.minobsinnode; myMNode
+myMNode = tune.gbm2$bestTune$n.minobsinnode; myMNode
 
 myGrd = expand.grid(n.trees = c(myTrees),
                     interaction.depth = c(myDepth),
@@ -629,7 +633,7 @@ cm.gbm <- confusionMatrix(yhat.gbm, trn.vld$classe)
 
 #### Support Vector
 
-```{r eval_svr, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+```{r eval_svr, echo=TRUE, eval=TRUE, collapse=TRUE}
 # Confusion Matrix
 kable(cm.svr$table, caption = "Confusion Matrix:")
 # Class Summary
@@ -638,7 +642,7 @@ kable(t(cm.svr$byClass), caption = "Statistics by Class:")
 
 #### Random Forest
 
-```{r eval_rft, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+```{r eval_rft, echo=TRUE, eval=TRUE, collapse=TRUE}
 # Confusion Matrix
 kable(cm.rft$table, caption = "Confusion Matrix:")
 # Class Summary
@@ -647,7 +651,7 @@ kable(t(cm.rft$byClass), caption = "Statistics by Class:")
 
 #### Gradient Boost
 
-```{r eval_gbm, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
+```{r eval_gbm, echo=TRUE, eval=TRUE, collapse=TRUE}
 # Confusion Matrix
 kable(cm.gbm$table, caption = "Confusion Matrix:")
 # Class Summary
@@ -729,14 +733,14 @@ kable(modelCor(results), caption = "Model Correlation Matrix:")
 
 #### Density Plots
 
-Although the Gradient Boost model doesn't perform as well as the other separate models, the stacked model is able to learn from it's variance to boost performance over all of the separate models. 
+Although the Gradient Boost model doesn't perform as well as the other separate models, the stacked model is able to learn from its variance to boost performance over all of the separate models. 
 
 ```{r finale_dplot, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=9}
 results <- resamples(list(
-             SVM.Radial     = fit.svr,
-             Random.Forest  = fit.rft,
-             Gradient.Boost = fit.gbm,
-             Ensemble.Stack = fit.stack
+             '1.SVM.Radial'     = fit.svr,
+             '2.Random.Forest'  = fit.rft,
+             '3.Gradient.Boost' = fit.gbm,
+             '4.Ensemble.Stack' = fit.stack
            ))
 
 # Summarize the ensemble results
@@ -746,10 +750,9 @@ lapply(fit.stack, summary)
 # Using Kappa as a more conservative measure for accuracy.
 densityplot(results, metric='Kappa', 
             auto.key=list(space='right', 
-                          trellis.par.set(superpose.line = list(
-                            lwd = 2.5,
-                            lty = 1
-                          ))))
+                          trellis.par.set(superpose.line = list(lwd = 2.5, lty = 1))
+                          )
+            )
 ```
 
 #### Box Plots
@@ -772,7 +775,7 @@ kable(t(cm.stk$byClass), caption = "Statistics by Class:")
 
 ## Conclusion
 
-The ensemble model's training accuracy (`r round(getTrainPerf(fit.stack)$TrainAccuracy * 100, 2)`%) shows a `r round((getTrainPerf(fit.stack)$TrainAccuracy - getTrainPerf(fit.svr)$TrainAccuracy) * 100, 2)`% predictive improvement over the SVM model (`r round(getTrainPerf(fit.svr)$TrainAccuracy * 100, 2)`%). Against the test data, the ensemble model has similar performance (`r round(confusionMatrix(yhat.stk, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%). This means that the model is well generalized and therefore not overfit to the training data. Let's see how it compares to the separate models on the test data:
+The ensemble model's training accuracy (`r round(getTrainPerf(fit.stack)$TrainAccuracy * 100, 2)`%) shows a `r round((getTrainPerf(fit.stack)$TrainAccuracy - getTrainPerf(fit.svr)$TrainAccuracy) * 100, 2)`% predictive improvement over the SVM model (`r round(getTrainPerf(fit.svr)$TrainAccuracy * 100, 2)`%). Against the test data, the ensemble model has similar performance (`r round(confusionMatrix(yhat.stk, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%). This indicates that the model is well generalized and therefore not overfit to the training data. Let's see how it compares to the separate models on the test data:
 
 * SVM-Radial: `r round(confusionMatrix(yhat.svr, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
 * Random Forest: `r round(confusionMatrix(yhat.rft, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
@@ -834,3 +837,5 @@ for(x in 1:length(fin.pred)) {
 [10]: https://en.wikipedia.org/wiki/Principal_component_analysis
 [11]: http://blog.minitab.com/blog/applying-statistics-in-quality-projects/how-could-you-benefit-from-a-box-cox-transformation
 [12]: https://en.wikipedia.org/wiki/Variance_inflation_factor
+[13]: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3885826/
+
