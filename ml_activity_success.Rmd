@@ -1,5 +1,5 @@
 ---
-title: 'Machine Learning: Successful Completion of Fitness Exercises'
+title: 'Machine Learning: Successful Completion of Weight-Lifting Exercises'
 author: "Roberto Rivera"
 date: "01/22/2017"
 output:
@@ -16,11 +16,28 @@ output:
   pdf_document: default
 ---
 
-## Introduction
+<style type="text/css">
+blockquote {
+  font-size: 13px;
+}
+blockquote p {
+  display: inline;
+}
+code.r{ /* Code block */
+  font-size: 11px;
+}
+pre { /* Code block */
+  font-size: 11px
+}
+</style>
+
+## Background
 
 With devices like the Jawbone Up, Nike FuelBand and Fitbit, it is feasible to inexpensively collect and analyze a large quantity of Human Activity Recognition (HAR) data. Although users of these devices tend to quantify how much they participate in an activity, they rarely consider "how well" they perform the activity. Using HAR data from [Groupware@LES][1] we aim to leverage information regarding weight-lifting exercises to predict how well an exercise was performed by the users of HAR devices. Six participants in the Groupware study were asked to perform dumbbell exercises with correct form (Class A) and with the most common mistakes: throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
 
-Using this HAR class data, we plan to leverage machine learning algorithms to develop a model that can distinguish between participants that have exercised correctly versus those that didn't and what their mistakes were. We will then use this model to assess how accurately we can classify the exercises performed by other individuals solely based on their HAR data.
+## Objective
+
+Using this HAR class data, we plan to leverage machine learning algorithms to develop a model that can distinguish between participants that have exercised correctly versus those that didn't, and what their mistakes were. We will then use this model to assess how accurately we can classify the exercises performed by other individuals solely based on their HAR data.
 
 ## Data Processing
 
@@ -103,7 +120,7 @@ corrRt = 0.80 # Correlation Cutoff
 dSplit = 0.60 # Training Cutoff
 
 ## Set model parameters for model tuning and training
-cntFld = 8    # Number of cross-validation folds
+cntFld = 10    # Number of cross-validation folds
 cntRpt = 4    # Increase the Repeat count for improved cross-validation accuracy
 cntTun = 5    # Parameter for tuning accuracy vs resource consumption
 ```
@@ -116,9 +133,9 @@ One option is to reduce the number of predictors to a smaller set of uncorrelate
 
 The goal of PCA is to explain the maximum amount of variance with the fewest number of principal components. PCA creates these components by transforming the variables into a smaller sub-space of variables (dimensionality reduction) that are uncorrelated with each other. A challenge with the components is that it can be difficult to explain what is driving model performance.
 
-We are going to approach this three different ways to get a sense of effort and impact: 1) we'll remove the multicollinear predictors, 2) we'll apply PCA to the multicolliear predictors, and 3) we'll apply PCA to all the predictors. Using the Caret R package, we apply a [Box-Cox Transformation][11] to correct for skewness, center and scale each variable and then apply PCA in one call to pre-process the variables. 
+We are going to approach this three different ways to get a sense of effort and impact: 1) we'll remove the multicollinear predictors, 2) we'll apply PCA to the multicollinear predictors, and 3) we'll apply PCA to all the predictors. Using the Caret R package, we apply a [Box-Cox Transformation][11] to correct for skewness, center and scale each variable and then apply PCA in one call to pre-process the variables. 
 
-We defined a stepwise [Variable Inflaction Factor (VIF)][12] function to identify multicollinear variables within our specified threshold. A value greater than 10 is considered to be high collinearity. The threshold may be set to the required tolerance needed for the specific analysis. 
+We defined a stepwise [Variable Inflaction Factor (VIF)][12] function to identify multicollinear variables within our specified threshold. A value greater than 10 is considered to be highly collinear. The threshold may be set to the required tolerance needed for the specific analysis. 
 
 ```{r setup_vif, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, cache=TRUE, collapse=TRUE}
 # compile stepwise VIF selection function for reducing collinearity among explanatory variables
@@ -186,7 +203,7 @@ vif_func<-function(in_frame, thresh=10, trace=T, ...){
 
 #### Baseline Correlation Matrix
 
-This plot is difficult to read, but the key take-away is that the baseline variables are *<u>unusable for modelling</u>* due to significant multicollinearity. This is hightlighted by the darker colored cross-sections. The summary below the plot highlights the overall multicollinearity.
+This plot is difficult to read, but the key take-away is that the baseline variables are *<u>unusable for modelling</u>* due to significant multicollinearity. This is emphasized by the darker colored cross-sections. The summary below the plot highlights the overall multicollinearity.
 
 ```{r init_collinearity, echo=TRUE, eval=TRUE, fig.height=6.5, fig.width=6.5, collapse=TRUE}
 # Build a correlation matrix on the initial variables, excluding the "classe" variable
@@ -329,9 +346,9 @@ trn.dat <- trn.dat.pca
 
 ### Tuning Preparation
 
-We are using a `r dSplit*100`% data split to define our training set. To provide a meaningful estimation of performance, the remaining `r (1-dSplit)*100`% will be divided equally to define our validation and test sets. In addition, we use [repeated k-fold cross-validation][2] with `r cntFld` folds to capture the highest average accuracy estimate achieved accross the `r cntRpt` repetition(s). We preprocess the data with "centered and scaled" to reduce noise.
+We are using a `r dSplit*100`% data split to define our training set. To provide a meaningful estimation of performance, the remaining `r (1-dSplit)*100`% will be divided equally to define our validation and test sets. In addition, we use [repeated k-fold cross-validation][2] with `r cntFld` folds to improve the average accuracy estimate achieved accross the `r cntRpt` repetition(s). We preprocess the data with "centered and scaled" to reduce noise. We tune our individual models with the training set, and test their perfomance on the validation set. The test set is for assessing the ensemble model performance. 
 
-Using our final training set, we tune our models. Since this process can be very resource intensive, we use [OpenBlas][3], which is an optimized library to replace the standard BLAS library used by R. In addition, we use the "doMC" library to specify the number cores to correspond with the maximum number of R jobs to run in parallel. Depending on your tuning parameters and training set size, that this process can easily consume all of your memory and may take a few hours to run.
+> *<u>Technical Notes</u>: Since this process can be very resource intensive, we use [OpenBlas][3], which is an optimized library to replace the standard BLAS library used by R. In addition, we use the "doMC" library to specify the number cores to correspond with the maximum number of R jobs to run in parallel. Depending on your tuning parameters and training set size, this process can easily consume all of your computer memory and may take hours to run.*
 
 ```{r model_params, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, collapse=TRUE}
 # Partition the data with training, validation, and test sets.
@@ -471,9 +488,9 @@ myMinob = tune.gbm1$bestTune$n.minobsinnode; myMinob
 # * Depth (5-8) should be chosen based on the number of observations and predictors. 
 # * Shrinkage (0.05-0.2) controls the learning rate.
 myGrd = expand.grid(n.trees = c(myTrees+1199),
-                    interaction.depth = c(myDepth-1, myDepth, myDepth+1),
+                    interaction.depth = c(myDepth+1),
                     shrinkage = c(0.08),
-                    n.minobsinnode = c(15))
+                    n.minobsinnode = c(15:17))
 
 system.time(
     # Fit model to the training set.
@@ -545,7 +562,7 @@ summary(mdiffs)
 
 ### Fitting the Models {.tabset .tabset-fade}
 
-Now that we have the tuned parameters we select and fit the final models. This is really fast compared to the tuning steps. Although the models perform well individually, we built an ensemble model to hightlight the process and potential benefit to predictive performance. To get additional lift, it is important that the models being stacked have varying variables of importance.
+Now that we have the tuned parameters we select and fit the final models. This is really fast compared to the tuning steps. 
 
 ```{r model_pext, echo=TRUE, eval=TRUE, collapse=TRUE}
 # Retrive the training errors for the SVM model
@@ -569,9 +586,11 @@ err.rft <- tune.rft2$finalModel$err.rate[ntr, 1]; err.rft
 
 ```{r fit_svr, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # Calculate the final model with the tuning parameters from the above.
-mySig = tune.svr2$bestTune$sigma; mySig
-myCst = tune.svr2$bestTune$C; myCst
+mySig = tune.svr2$bestTune$sigma
+myCst = tune.svr2$bestTune$C
 newGrid = expand.grid(sigma=c(mySig), C=c(myCst))
+
+mySig; myCst
 
 system.time(
     # Fit model to the training set.
@@ -599,10 +618,12 @@ system.time(
 
 ```{r fit_gbm, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # Calculate the final model with the tuning parameters from the above.
-myTrees = tune.gbm2$bestTune$n.trees; myTrees
-myDepth = tune.gbm2$bestTune$interaction.depth; myDepth
-myShrnk = tune.gbm2$bestTune$shrinkage; myShrnk
-myMNode = tune.gbm2$bestTune$n.minobsinnode; myMNode
+myTrees = tune.gbm2$bestTune$n.trees
+myDepth = tune.gbm2$bestTune$interaction.depth
+myShrnk = tune.gbm2$bestTune$shrinkage
+myMNode = tune.gbm2$bestTune$n.minobsinnode
+
+myTrees; myDepth; myShrnk; myMNode
 
 myGrd = expand.grid(n.trees = c(myTrees),
                     interaction.depth = c(myDepth),
@@ -660,9 +681,9 @@ kable(t(cm.gbm$byClass), caption = "Statistics by Class:")
 
 ### Ensemble (Stack) Model {.tabset .tabset-fade}
 
-Different algorithms will find some variables more predictve than others, and will rank them differently. This shows up in the variables of importances (see below). The ensemble model is able to capitalize on those differences to boost predictive performance. 
+Although the separate models perform well individually, we build this ensemble model to hightlight the process, and the potential benefit to predictive performance. Different algorithms will find some variables more predictve than others, and will rank them differently. This shows up in the variables of importances (see below). To get additional lift, it is important that the models being stacked have varying variables of importance, because the ensemble model will capitalize on those differences to boost predictive performance. 
 
-After fitting the separate models to our validation set, we created modelled predictors so that we can train the ensemble model. Then we assess the model performance against our test set. This "stacked" model should have improved predictive performance over the separate models.
+After fitting the separate models to our validation set, we create "modelled predictors" so that we can train the ensemble model. Then we assess the model performance against our test set. This "stacked" model should have improved predictive performance over the separate models.
 
 ```{r model_stack, echo=TRUE, eval=TRUE, collapse=TRUE}
 set.seed(1732)
@@ -733,7 +754,7 @@ kable(modelCor(results), caption = "Model Correlation Matrix:")
 
 #### Density Plots
 
-Although the Gradient Boost model doesn't perform as well as the other separate models, the stacked model is able to learn from its variance to boost performance over all of the separate models. 
+Although the Gradient Boost and Random Forest models do not perform as well as the Support Vector Machine model, the ensemble algorithm is able to learn from their variance to perform better than all three. 
 
 ```{r finale_dplot, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=9}
 results <- resamples(list(
@@ -775,13 +796,15 @@ kable(t(cm.stk$byClass), caption = "Statistics by Class:")
 
 ## Conclusion
 
-The ensemble model's training accuracy (`r round(getTrainPerf(fit.stack)$TrainAccuracy * 100, 2)`%) shows a `r round((getTrainPerf(fit.stack)$TrainAccuracy - getTrainPerf(fit.svr)$TrainAccuracy) * 100, 2)`% predictive improvement over the SVM model (`r round(getTrainPerf(fit.svr)$TrainAccuracy * 100, 2)`%). Against the test data, the ensemble model has similar performance (`r round(confusionMatrix(yhat.stk, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%). This indicates that the model is well generalized and therefore not overfit to the training data. Let's see how it compares to the separate models on the test data:
+The ensemble model's training accuracy (`r round(getTrainPerf(fit.stack)$TrainAccuracy * 100, 2)`%) shows a `r round((getTrainPerf(fit.stack)$TrainAccuracy - getTrainPerf(fit.svr)$TrainAccuracy) * 100, 2)`% predictive improvement over the SVM model (`r round(getTrainPerf(fit.svr)$TrainAccuracy * 100, 2)`%). 
+
+Against the test data, the ensemble model has similar performance (`r round(confusionMatrix(yhat.stk, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%). Let's see how it performs compared to the separate models (against the test data):
 
 * SVM-Radial: `r round(confusionMatrix(yhat.svr, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
 * Random Forest: `r round(confusionMatrix(yhat.rft, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
 * Gradient Boost: `r round(confusionMatrix(yhat.gbm, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
 
-In addition to better overall performance, the ensemble model has per-class performance that is equal-to or better than the separate models:
+This indicates that the model is well generalized and therefore not overfit to the training data. In addition to improved average performance, the ensemble model has per-class performance that is equal-to or better than the separate models:
 
 ```{r stats_stk, echo=TRUE, eval=TRUE, collapse=TRUE}
 # Assess how the ensemble gets higher accuracy
