@@ -1,7 +1,8 @@
 ---
-title: 'Machine Learning: Successful Completion of Weight-Lifting Exercises'
+title: 'Machine Learning: Identify the Successful Completion of Weight-Lifting Exercises'
 author: "Roberto Rivera"
-date: "01/22/2017"
+date: "01/28/2017"
+footer: "What's up"
 output:
   html_document:
     toc: true
@@ -9,6 +10,8 @@ output:
     code_folding: hide
     theme: united
     highlight: zenburn
+    include:
+      after_body: footer.html
   pandoc_args:
     - +RTS
     - -K64m
@@ -19,6 +22,7 @@ output:
 <style type="text/css">
 blockquote {
   font-size: 13px;
+  font-style: italic
 }
 blockquote p {
   display: inline;
@@ -38,6 +42,8 @@ With devices like the Jawbone Up, Nike FuelBand and Fitbit, it is feasible to in
 ## Objective
 
 Using this HAR class data, we plan to leverage machine learning algorithms to develop a model that can distinguish between participants that have exercised correctly versus those that didn't, and what their mistakes were. We will then use this model to assess how accurately we can classify the exercises performed by other individuals solely based on their HAR data.
+
+> <u>Technical Notes</u>: This post is statically generated with [RStudio `r getRversion()`][21] using [RMarkdown `r packageVersion("rmarkdown")`][20] for [reproducibility][16]. The complete codebase is available on my [github page][17]. Many code blocks are cached for performant iterative analysis. When updating code blocks, pay special attention to subsequent cached code blocks that should be updated as a result. To learn more, have a peek at the [RStudio][15]/[RMarkdown][18] documentation and [cheatsheets][14].
 
 ## Data Processing
 
@@ -60,9 +66,9 @@ if (!file.exists(tstFile)) {
 }
 ```
 
-### Preparing the Data
+### Exploring and Preparing the Data
 
-The goal of data prep is to identify the variables that explain as much of the variance possible and eliminate the remainder. In other words, we need to find the fewest quantity of variables that can explain everything that is going on. Our exploratory analysis shows that the file is just shy of twenty thousand records. Some variables contain a significant quantity of values that are near-zero-variance or are missing. To improve model performance and simplify our analysis we discard those variables and a few variables not related to exercise performance. This brings our variable count down from 160 to 53. Also, the provided data has a relatively balanced class variables, which simplifies this analysis somewhat.
+The goal of data prep is to identify the variables that explain as much of the class variance possible. In other words, we need to find the fewest quantity of variables that can explain everything that is going on. To improve model performance and simplify our analysis we discard those variables not related to exercise performance. 
 
 ```{r prep_data, echo=TRUE, eval=TRUE, collapse=TRUE}
 # Load libraries
@@ -71,6 +77,7 @@ library(knitr)
 library(corrplot)
 library(doMC)
 library(ggplot2)
+library(pROC)
 
 # Define number of parallel processes
 registerDoMC(cores = 8)
@@ -79,7 +86,7 @@ registerDoMC(cores = 8)
 trn.dat = read.csv(trnFile, na.strings=c("NA","NaN", "", " "), stringsAsFactors=FALSE); rm("trnFile")
 
 # Quick exploratory analysis
-dim(trn.dat)
+dim.init <- dim(trn.dat); dim.init
 str(trn.dat)
 
 ## Removing unnecessary covariates
@@ -109,8 +116,7 @@ trn.dat.all <- trn.dat.all[col.keep]
 ## Cleanup and default model settings
 # Set the classe variable as a factor.
 trn.dat.all$classe <- as.factor(trn.dat.all$classe)
-dim(trn.dat.all)
-table(trn.dat$classe)
+dim.finl <- dim(trn.dat.all); dim.finl
 
 # house-cleaning
 rm("cnt.min", "col.drops", "col.keep", "col.names", "col.nrel", "col.nzvs", "fld", "trn.cnt.df", "nsv","trn.dat")
@@ -121,8 +127,14 @@ dSplit = 0.60 # Training Cutoff
 
 ## Set model parameters for model tuning and training
 cntFld = 10    # Number of cross-validation folds
-cntRpt = 4    # Increase the Repeat count for improved cross-validation accuracy
+cntRpt = 8    # Increase the Repeat count for improved cross-validation accuracy
 cntTun = 5    # Parameter for tuning accuracy vs resource consumption
+```
+
+Our exploratory analysis shows that the file is just shy of twenty thousand records and that some of the variables have near-zero-variance values or have missing values. After discarding them, our variable count drops from `r dim.init[2]` down to `r dim.finl[2]`. The class variables in the provided data is relatively balanced, which simplifies this analysis somewhat.
+
+```{r prep_summ, echo=TRUE, eval=TRUE, collapse=TRUE}
+kable(t(table(trn.dat.all$classe)), caption = "Class Variable Frequency:")
 ```
 
 ### Handling Multicollinearity {.tabset .tabset-fade}
@@ -133,9 +145,13 @@ One option is to reduce the number of predictors to a smaller set of uncorrelate
 
 The goal of PCA is to explain the maximum amount of variance with the fewest number of principal components. PCA creates these components by transforming the variables into a smaller sub-space of variables (dimensionality reduction) that are uncorrelated with each other. A challenge with the components is that it can be difficult to explain what is driving model performance.
 
-We are going to approach this three different ways to get a sense of effort and impact: 1) we'll remove the multicollinear predictors, 2) we'll apply PCA to the multicollinear predictors, and 3) we'll apply PCA to all the predictors. Using the Caret R package, we apply a [Box-Cox Transformation][11] to correct for skewness, center and scale each variable and then apply PCA in one call to pre-process the variables. 
+We are going to approach this three different ways to get a sense of effort and impact:
 
-We defined a stepwise [Variable Inflaction Factor (VIF)][12] function to identify multicollinear variables within our specified threshold. A value greater than 10 is considered to be highly collinear. The threshold may be set to the required tolerance needed for the specific analysis. 
+1) remove the multicollinear predictors, 
+2) apply PCA to the multicollinear predictors, and 
+3) apply PCA to all the predictors. 
+
+Using the Caret R package, we apply a [Box-Cox Transformation][11] to correct for skewness, center and scale each variable and then apply PCA in one call to pre-process the variables. In addition, we defined a stepwise [Variable Inflaction Factor (VIF)][12] function to identify multicollinear variables within our specified threshold. A value greater than 10 is considered to be highly collinear. The threshold may be set to the specific tolerance required for your analysis. 
 
 ```{r setup_vif, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, cache=TRUE, collapse=TRUE}
 # compile stepwise VIF selection function for reducing collinearity among explanatory variables
@@ -226,7 +242,7 @@ kable(corrTabl, digits = 4, align = 'r', format='markdown')
 
 #### Drop Correlation Matrix
 
-Using the stepwise VIF function, we dropped variables with collinearity threshold greater than two. Notice the fainter colors compared to the initial matrix. Although we significantly improved our collinearity, we may loose some of the predictive variance in the dropped variables.
+Using the stepwise VIF function, we dropped variables with collinearity threshold greater than <u>**two**</u>. Notice the fainter colors compared to the initial matrix. Although we significantly improved our collinearity, we may loose some of the predictive variance in the dropped variables.
 
 ```{r setup_collinearity_drp, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, cache=TRUE, collapse=TRUE}
 # use stepwise VIF remove the highly correlated values from the training variable list
@@ -256,7 +272,7 @@ kable(corrTabl, digits = 4, align = 'r', format='markdown')
 
 #### Hybrid Correlation Matrix
 
-Rather than dropping all of the variables that exceed our threshold, this step extracts their priciple components using PCA. The surviving variables and priciple components are then combined to create our training set. We removed most of the significant collinearity while maintainining the predictive variance. Depending on your needs, the remaining collinearity may still be too high.
+Rather than dropping all of the variables that exceed our threshold, this step extracts their priciple components using PCA. The surviving variables and priciple components are then combined to create our training set. Most of the significant collinearity is removed while maintainining the predictive variance. Depending on your needs, the remaining collinearity may still be too high.
 
 ```{r setup_collinearity_hyb, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, cache=TRUE, collapse=TRUE}
 # Reassign variables to the PCA list that push our VIF threshold above 6
@@ -301,7 +317,7 @@ kable(corrTabl, digits = 4, align = 'r', format='markdown')
 
 #### PCA Correlation Matrix
 
-For maximum reduction of multicollinearity, this approach transforms all the variables into princicple components. Notice how we eliminated all multicollinearity. The only real challenge with this approach, is that it becomes <u>less intuitive</u> in understanding and describing what drives the model.
+For maximum reduction of multicollinearity, this approach transforms all the variables into princicple components. Notice how we have eliminated all multicollinearity. The only real challenge with this approach, is that it is <u>less intuitive</u> to understand and describe what drives the model performance.
 
 ```{r setup_collinearity_pca, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, cache=TRUE, collapse=TRUE}
 # Identify all the variables
@@ -337,20 +353,20 @@ corrplot(corrMatx,
 # print the correlation summary
 kable(dim(trn.dat.pca)[2], col.names = c("Variables"), format='html')
 kable(corrTabl, digits = 4, align = 'r', format='markdown')
-
-# Select the PCA dataset for training.
-trn.dat <- trn.dat.pca
 ```
 
 ## Machine Learning
 
 ### Tuning Preparation
 
-We are using a `r dSplit*100`% data split to define our training set. To provide a meaningful estimation of performance, the remaining `r (1-dSplit)*100`% will be divided equally to define our validation and test sets. In addition, we use [repeated k-fold cross-validation][2] with `r cntFld` folds to improve the average accuracy estimate achieved accross the `r cntRpt` repetition(s). We preprocess the data with "centered and scaled" to reduce noise. We tune our individual models with the training set, and test their perfomance on the validation set. The test set is for assessing the ensemble model performance. 
+We are using a `r dSplit*100`% data split to define our training set. To provide a meaningful estimation of performance, the remaining `r (1-dSplit)*100`% will be divided equally to define our validation and test sets. The individual models are tuned with the training set, and assessed against the validation set. The test set is for estimating the ensemble model performance.
 
-> *<u>Technical Notes</u>: Since this process can be very resource intensive, we use [OpenBlas][3], which is an optimized library to replace the standard BLAS library used by R. In addition, we use the "doMC" library to specify the number cores to correspond with the maximum number of R jobs to run in parallel. Depending on your tuning parameters and training set size, this process can easily consume all of your computer memory and may take hours to run.*
+With the [Caret R package][19], we use [repeated k-fold cross-validation][2] with `r cntFld` folds across `r cntRpt` repetition`r if(cntRpt>1){"s"}` to improve our accuracy estimates. We preprocess the data with "centered and scaled" to better expose the underlying structure and relationships to the predictors. We pre-calculate a vector of seeds for reproducibility across multiple parallel model runs.
 
 ```{r model_params, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, collapse=TRUE}
+# Select the PCA dataset for training.
+trn.dat <- trn.dat.pca
+
 # Partition the data with training, validation, and test sets.
 set.seed(1732)
 inTrain <- createDataPartition(y=trn.dat$classe, p=dSplit, list=FALSE)
@@ -384,7 +400,15 @@ rm("i", "cntFld", "cntRpt", "inTrain", "corrMatx", "vif_func")
 
 There are two ways to tune an algorithm using the Caret R package. The first, allow the system to do it automatically by setting the `tuneLength` parameter to indicate the number of different values to try for each algorithm parameter. This makes a crude guess on what values to try, but can quickly get you in a reasonable range. This is the approach we've taken on our first tuning pass. The second approach involves manually setting the tuning grid to search. Our second tuning pass uses this approach. We start with the best performaning parameters from the first tuning pass and create a more focused tuning grid to further refine our parameters.
 
-We have selected three models to tune: 1) Support Vector Machine (SVM) with a [Radial Basis Function (RBF) kernel][4], 2) [RandomForest][5], and 3) [Stochastic Gradient Boost Machine][7]. To improve SVM performance we doubled its grid-search area. Also, since the GBM algorithm is computational expensive, we did signficant [manual tuning][13] to attain good perforamnce. For good measure, we also create an [Ensemble][8] (Stack) model using the three separate algorithms to improve overall performance.
+We have selected three models to tune: 
+
+1) Support Vector Machine (SVM) with a [Radial Basis Function (RBF) kernel][4], 
+2) [RandomForest][5], and 
+3) [Stochastic Gradient Boost Machine][7]. 
+
+To improve SVM performance we doubled its grid-search area. Also, since the GBM algorithm is computational expensive, we did signficant [manual tuning][13] to attain good perforamnce. For good measure, we also created an [Ensemble][8] (Stack) model using the three separate algorithms to improve overall performance.
+
+> <u>Technical Notes</u>: Since this process can be very resource intensive, we use [OpenBlas][3], which is an optimized library to replace the standard BLAS library used by R. In addition, we use the "doMC" library to specify the number cores to correspond with the maximum number of R jobs to run in parallel. Depending on your tuning parameters and training set size, this process can easily consume all of your computer memory and may take hours to run.
 
 #### SVM Passes
 
@@ -639,7 +663,7 @@ system.time(
 
 ### Model Analysis and Validation {.tabset .tabset-fade}
 
-During this process we run the tuned models against our validation set to assess performance. This model performance indicates that our out-of-sample error is very good and that we haven't overfit the model.
+During this process we run the tuned models against our validation set to assess performance. This model performance indicates that our out-of-sample error is very good and that we have not overfit the model.
 
 ```{r model_analysis, echo=TRUE, eval=TRUE, collapse=TRUE}
 # Assess the separate model accuracy on the validation set.
@@ -681,7 +705,7 @@ kable(t(cm.gbm$byClass), caption = "Statistics by Class:")
 
 ### Ensemble (Stack) Model {.tabset .tabset-fade}
 
-Although the separate models perform well individually, we build this ensemble model to hightlight the process, and the potential benefit to predictive performance. Different algorithms will find some variables more predictve than others, and will rank them differently. This shows up in the variables of importances (see below). To get additional lift, it is important that the models being stacked have varying variables of importance, because the ensemble model will capitalize on those differences to boost predictive performance. 
+Although the separate models perform well individually, we built this ensemble model to hightlight the process, and the potential benefit to predictive performance. Different algorithms will find some variables more predictve than others, and will rank them differently. This shows up in the variables of importances (see below). To get additional lift, it is important that the models being stacked have varying variables of importance, because the ensemble model will capitalize on those differences to boost predictive performance. 
 
 After fitting the separate models to our validation set, we create "modelled predictors" so that we can train the ensemble model. Then we assess the model performance against our test set. This "stacked" model should have improved predictive performance over the separate models.
 
@@ -739,7 +763,7 @@ kable(head(viv[with(viv, order(-Gradient_Boost)), ], 10),
 
 #### Model Correlation
 
-Similar to searching for multicolinearity in the predictors of the separate models, we need to check if modelled predictors are fairly un-correlated. Ideally, the modelled predictors should have less than 75% correlation.
+Similar to searching for multicolinearity in the predictors of the separate models, we need to check if modelled predictors are fairly uncorrelated. Ideally, the modelled predictors should have less than 75% correlation.
 
 ```{r finale_mcoor, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=9}
 results <- resamples(list(
@@ -756,7 +780,7 @@ kable(modelCor(results), caption = "Model Correlation Matrix:")
 
 Although the Gradient Boost and Random Forest models do not perform as well as the Support Vector Machine model, the ensemble algorithm is able to learn from their variance to perform better than all three. 
 
-```{r finale_dplot, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=4, fig.width=9}
+```{r finale_dplot, echo=TRUE, eval=TRUE, collapse=TRUE, fig.height=5, fig.width=9}
 results <- resamples(list(
              '1.SVM.Radial'     = fit.svr,
              '2.Random.Forest'  = fit.rft,
@@ -796,15 +820,16 @@ kable(t(cm.stk$byClass), caption = "Statistics by Class:")
 
 ## Conclusion
 
-The ensemble model's training accuracy (`r round(getTrainPerf(fit.stack)$TrainAccuracy * 100, 2)`%) shows a `r round((getTrainPerf(fit.stack)$TrainAccuracy - getTrainPerf(fit.svr)$TrainAccuracy) * 100, 2)`% predictive improvement over the SVM model (`r round(getTrainPerf(fit.svr)$TrainAccuracy * 100, 2)`%). 
+Our statistics, including accuracy, [precision, and recall][22], indicate that the ensemble model is well generalized and not overfit to the training data. The ensemble model's estimated training accuracy (`r round(getTrainPerf(fit.stack)$TrainAccuracy * 100, 2)`%) shows a `r round((getTrainPerf(fit.stack)$TrainAccuracy - getTrainPerf(fit.svr)$TrainAccuracy) * 100, 2)`% predictive improvement over the SVM model (`r round(getTrainPerf(fit.svr)$TrainAccuracy * 100, 2)`%). 
 
-Against the test data, the ensemble model has similar performance (`r round(confusionMatrix(yhat.stk, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%). Let's see how it performs compared to the separate models (against the test data):
+Let's see how the ensemble performs compared to the separate models against the test data:
 
-* SVM-Radial: `r round(confusionMatrix(yhat.svr, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
-* Random Forest: `r round(confusionMatrix(yhat.rft, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
-* Gradient Boost: `r round(confusionMatrix(yhat.gbm, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
+* <u>Ensemble</u>: `r round(confusionMatrix(yhat.stk, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
+* <u>SVM-Radial</u>: `r round(confusionMatrix(yhat.svr, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
+* <u>Random Forest</u>: `r round(confusionMatrix(yhat.rft, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
+* <u>Gradient Boost</u>: `r round(confusionMatrix(yhat.gbm, trn.tst$classe)[[3]]["Accuracy"] * 100, 2)`%
 
-This indicates that the model is well generalized and therefore not overfit to the training data. In addition to improved average performance, the ensemble model has per-class performance that is equal-to or better than the separate models:
+In addition to the improved estimated mean performance, the ensemble model has estimated per-class performance that is equal-to or better than the separate models:
 
 ```{r stats_stk, echo=TRUE, eval=TRUE, collapse=TRUE}
 # Assess how the ensemble gets higher accuracy
@@ -814,10 +839,11 @@ pred.perf <- rbind(confusionMatrix(yhat.svr, trn.tst$classe)$byClass[, 7],
                    confusionMatrix(yhat.gbm, trn.tst$classe)$byClass[, 7],
                    confusionMatrix(yhat.stk, trn.tst$classe)$byClass[, 7])
 row.names(pred.perf) <- c("SVM.Radial", "Random.Forest", "Gradient.Boost", "Ensemble.Stack")
-
 # Class Summary
 kable(pred.perf, caption = "Per-class Weigthed Average of Precision and Recall (F-1):")
 ```
+
+> <u>Technical Notes</u>: ROC (Receiver Operating Characteristic) curve analysis was not designed for multi-classification problems, however using the [pROC][24] library, we calculate the mean area under the curve (**AUC**) on the test data of **`r round(multiclass.roc(as.ordered(trn.tst$classe), as.ordered(yhat.stk))$auc * 100, 2)`%**, which cannot be plotted. To learn more about ROC curve analysis, have a look at this BioMed Central (BMC) research paper. "Xavier Robin, Natacha Turck, Alexandre Hainard, Natalia Tiberti, Frédérique Lisacek, Jean-Charles Sanchez and Markus Müller (2011). [pROC: an open-source package for R and S+ to analyze and compare ROC curves][23]. BMC Bioinformatics, 12, p. 77. DOI: 10.1186/1471-2105-12-77".
 
 ```{r model_predict, echo=FALSE, eval=FALSE, collapse=TRUE}
 #After building the final model and testing it on our validation and test sets, we apply it to the final test file to confirm our prediction accuracy. Our model had a 100% match prediction on the test file. The final output will be applied to our Coursera project submission for grading.
@@ -849,7 +875,7 @@ for(x in 1:length(fin.pred)) {
 ```
 
 [1]: http://groupware.les.inf.puc-rio.br/har#ixzz3de67BWZU
-[2]: https://en.wikipedia.org/wiki/Cross-validation_(statistics)
+[2]: http://appliedpredictivemodeling.com/blog/2014/11/27/vpuig01pqbklmi72b8lcl3ij5hj2qm 
 [3]: http://www.openblas.net/
 [4]: https://en.wikipedia.org/wiki/Radial_basis_function_kernel
 [5]: https://en.wikipedia.org/wiki/Random_forest
@@ -861,4 +887,14 @@ for(x in 1:length(fin.pred)) {
 [11]: http://blog.minitab.com/blog/applying-statistics-in-quality-projects/how-could-you-benefit-from-a-box-cox-transformation
 [12]: https://en.wikipedia.org/wiki/Variance_inflation_factor
 [13]: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3885826/
-
+[14]: https://www.rstudio.com/resources/cheatsheets/
+[15]: https://support.rstudio.com/hc/en-us/categories/200035113-Documentation
+[16]: https://en.wikipedia.org/wiki/Reproducibility
+[17]: https://github.com/roobyz/PredictiveML
+[18]: http://rmarkdown.rstudio.com/lesson-1.html
+[19]: https://topepo.github.io/caret/
+[20]: http://rmarkdown.rstudio.com/
+[21]: https://rstudio.com/
+[22]: https://en.wikipedia.org/wiki/Precision_and_recall
+[23]: https://bmcbioinformatics.biomedcentral.com/articles/10.1186/1471-2105-12-77
+[24]: http://web.expasy.org/pROC/
