@@ -153,7 +153,7 @@ We are going to approach this three different ways to get a sense of effort and 
 
 Using the Caret R package, we apply a [Box-Cox Transformation][11] to correct for skewness, center and scale each variable and then apply PCA in one call to pre-process the variables. In addition, we defined a stepwise [Variable Inflaction Factor (VIF)][12] function to identify multicollinear variables within our specified threshold. A value greater than 10 is considered to be highly collinear. The threshold may be set to the specific tolerance required for your analysis. 
 
-```{r setup_vif, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, cache=TRUE, collapse=TRUE}
+```{r setup_vif, echo=TRUE, eval=TRUE, fig.height=8, fig.width=9, cache=TRUE, collapse=TRUE}
 # compile stepwise VIF selection function for reducing collinearity among explanatory variables
 vif_func<-function(in_frame, thresh=10, trace=T, ...){
   require(fmsb)
@@ -215,13 +215,13 @@ vif_func<-function(in_frame, thresh=10, trace=T, ...){
 }
 ```
 
-**Select the tabs below to compare multicollinearity across the different approaches versus the baseline**
+<u>**Select the tabs below**</u> to switch between the plots, which highlight multicollinearity across variables in each approach. Review the summary below each plot to see the change in variable count and understand the impact on multicollinearity overall.
 
 #### Baseline Correlation Matrix
 
-This plot is difficult to read, but the key take-away is that the baseline variables are *<u>unusable for modelling</u>* due to significant multicollinearity. This is emphasized by the darker colored cross-sections. The summary below the plot highlights the overall multicollinearity.
+This plot is difficult to read, but the key take-away is that the baseline variables are *<u>unusable for modelling</u>* due to significant multicollinearity. This is emphasized by the darker colored cross-sections.
 
-```{r init_collinearity, echo=TRUE, eval=TRUE, fig.height=6.5, fig.width=6.5, collapse=TRUE}
+```{r init_collinearity, echo=TRUE, eval=TRUE, fig.height=6, fig.width=9, collapse=TRUE}
 # Build a correlation matrix on the initial variables, excluding the "classe" variable
 corrMatx <- cor(trn.dat.all[, -dim(trn.dat.all)[2]])
 corrSumm <- summary(corrMatx[upper.tri(corrMatx)])[1:6]
@@ -244,14 +244,17 @@ kable(corrTabl, digits = 4, align = 'r', format='markdown')
 
 Using the stepwise VIF function, we dropped variables with collinearity threshold greater than <u>**two**</u>. Notice the fainter colors compared to the initial matrix. Although we significantly improved our collinearity, we may loose some of the predictive variance in the dropped variables.
 
-```{r setup_collinearity_drp, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, cache=TRUE, collapse=TRUE}
+```{r setup_collinearity_drp, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # use stepwise VIF remove the highly correlated values from the training variable list
 var.keep <- vif_func(in_frame=trn.dat.all[, -dim(trn.dat.all)[2]], thresh=2, trace=F)
 
 trn.dat.drp  <- trn.dat.all[,c(var.keep, "classe")]
+
+# calculate the final VIF value for the training set with the dropped variables
+var.keep <- vif_func(in_frame=trn.dat.drp[, -dim(trn.dat.drp)[2]], thresh=2, trace=T)
 ```
 
-```{r handle_collinearity_drp, echo=TRUE, eval=TRUE, fig.height=6, fig.width=6, collapse=TRUE}
+```{r handle_collinearity_drp, echo=TRUE, eval=TRUE, fig.height=6, fig.width=9, collapse=TRUE}
 # Build a correlation matrix on the initial variables, excluding the "classe" variable
 corrMatx <- cor(trn.dat.drp[, -dim(trn.dat.drp)[2]])
 corrSumm <- summary(corrMatx[upper.tri(corrMatx)])[1:6]
@@ -274,7 +277,7 @@ kable(corrTabl, digits = 4, align = 'r', format='markdown')
 
 Rather than dropping all of the variables that exceed our threshold, this step extracts their priciple components using PCA. The surviving variables and priciple components are then combined to create our training set. Most of the significant collinearity is removed while maintainining the predictive variance. Depending on your needs, the remaining collinearity may still be too high.
 
-```{r setup_collinearity_hyb, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, cache=TRUE, collapse=TRUE}
+```{r setup_collinearity_hyb, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # Reassign variables to the PCA list that push our VIF threshold above 6
 var.pck <- setdiff(var.keep, 
                    c("magnet_arm_x", "magnet_forearm_x", "gyros_arm_x", 
@@ -296,7 +299,7 @@ trn.dat.hyb  <- cbind(trn.dat.all[,c(var.pck)], trn.pca, classe=trn.dat.all$clas
 var.pck <- vif_func(in_frame=trn.dat.hyb[, -dim(trn.dat.hyb)[2]], thresh=9, trace=T)
 ```
 
-```{r handle_collinearity_hyb, echo=TRUE, eval=TRUE, fig.height=6, fig.width=6, collapse=TRUE}
+```{r handle_collinearity_hyb, echo=TRUE, eval=TRUE, fig.height=6, fig.width=9, collapse=TRUE}
 # Build a correlation matrix on the initial variables, excluding the "classe" variable
 corrMatx <- cor(trn.dat.hyb[, -dim(trn.dat.hyb)[2]])
 corrSumm <- summary(corrMatx[upper.tri(corrMatx)])[1:6]
@@ -319,7 +322,7 @@ kable(corrTabl, digits = 4, align = 'r', format='markdown')
 
 For maximum reduction of multicollinearity, this approach transforms all the variables into princicple components. Notice how we have eliminated all multicollinearity. The only real challenge with this approach, is that it is <u>less intuitive</u> to understand and describe what drives the model performance.
 
-```{r setup_collinearity_pca, echo=TRUE, eval=TRUE, fig.height=8, fig.width=8, cache=TRUE, collapse=TRUE}
+```{r setup_collinearity_pca, echo=TRUE, eval=TRUE, cache=TRUE, collapse=TRUE}
 # Identify all the variables
 var.pca  <- setdiff(colnames(trn.dat.all), c("classe"))
 
@@ -336,7 +339,7 @@ trn.dat.pca  <- cbind(trn.pca, classe=trn.dat.all$classe)
 var.pca <- vif_func(in_frame=trn.dat.pca[, -dim(trn.dat.pca)[2]], thresh=9, trace=T)
 ```
 
-```{r handle_collinearity_pca, echo=TRUE, eval=TRUE, fig.height=6, fig.width=6, collapse=TRUE}
+```{r handle_collinearity_pca, echo=TRUE, eval=TRUE, fig.height=6, fig.width=9, collapse=TRUE}
 # Build a correlation matrix on the initial variables, excluding the "classe" variable
 corrMatx <- cor(trn.dat.pca[, -dim(trn.dat.pca)[2]])
 corrSumm <- summary(corrMatx[upper.tri(corrMatx)])[1:6]
@@ -398,7 +401,7 @@ rm("i", "cntFld", "cntRpt", "inTrain", "corrMatx", "vif_func")
 
 ### Grid Searching {.tabset .tabset-fade}
 
-There are two ways to tune an algorithm using the Caret R package. The first, allow the system to do it automatically by setting the `tuneLength` parameter to indicate the number of different values to try for each algorithm parameter. This makes a crude guess on what values to try, but can quickly get you in a reasonable range. This is the approach we've taken on our first tuning pass. The second approach involves manually setting the tuning grid to search. Our second tuning pass uses this approach. We start with the best performaning parameters from the first tuning pass and create a more focused tuning grid to further refine our parameters.
+There are two ways to tune an algorithm using the Caret R package. The first method is to allow the system to automatically do it, by setting the `tuneLength` parameter to indicate the number of different values to try for each algorithm parameter. This makes a crude guess on what values to try, but can often get you within a reasonable range. This is the approach we've taken on our first tuning pass. The second approach involves manually setting the tuning grid to search. Our second tuning pass uses this approach. We start with the best performing parameters from the first tuning pass and create a more focused tuning grid to further refine our parameters.
 
 We have selected three models to tune: 
 
@@ -406,7 +409,7 @@ We have selected three models to tune:
 2) [RandomForest][5], and 
 3) [Stochastic Gradient Boost Machine][7]. 
 
-To improve SVM performance we doubled its grid-search area. Also, since the GBM algorithm is computational expensive, we did signficant [manual tuning][13] to attain good perforamnce. For good measure, we also created an [Ensemble][8] (Stack) model using the three separate algorithms to improve overall performance.
+To improve SVM performance we doubled its grid-search area during its first pass. Also, since the GBM algorithm is computationally expensive, we did signficant [manual tuning][13] during its second pass to attain reasonable performance. For good measure, we created an [Ensemble (Stack)][8] model using the three separate algorithms to improve overall performance.
 
 > <u>Technical Notes</u>: Since this process can be very resource intensive, we use [OpenBlas][3], which is an optimized library to replace the standard BLAS library used by R. In addition, we use the "doMC" library to specify the number cores to correspond with the maximum number of R jobs to run in parallel. Depending on your tuning parameters and training set size, this process can easily consume all of your computer memory and may take hours to run.
 
@@ -661,9 +664,9 @@ system.time(
 )
 ```
 
-### Model Analysis and Validation {.tabset .tabset-fade}
+### Separate Model Analysis & Validation {.tabset .tabset-fade}
 
-During this process we run the tuned models against our validation set to assess performance. This model performance indicates that our out-of-sample error is very good and that we have not overfit the model.
+During this process we run the tuned models against our validation set to assess performance. The model performance statistics indicate reasonable performance and that we have not overfit the model.
 
 ```{r model_analysis, echo=TRUE, eval=TRUE, collapse=TRUE}
 # Assess the separate model accuracy on the validation set.
@@ -703,9 +706,9 @@ kable(cm.gbm$table, caption = "Confusion Matrix:")
 kable(t(cm.gbm$byClass), caption = "Statistics by Class:")
 ```
 
-### Ensemble (Stack) Model {.tabset .tabset-fade}
+### Ensemble Model Analysis & Comparison {.tabset .tabset-fade}
 
-Although the separate models perform well individually, we built this ensemble model to hightlight the process, and the potential benefit to predictive performance. Different algorithms will find some variables more predictve than others, and will rank them differently. This shows up in the variables of importances (see below). To get additional lift, it is important that the models being stacked have varying variables of importance, because the ensemble model will capitalize on those differences to boost predictive performance. 
+Although the separate models perform well individually, we built this ensemble model to hightlight the process and the potential benefit to predictive performance. Different algorithms will find some variables more predictve than others, and will rank them differently. This shows up in the variables of importance (see below). To get additional lift, it is important that the models being stacked have varying variables of importance, because the ensemble model will capitalize on those differences to boost predictive performance. 
 
 After fitting the separate models to our validation set, we create "modelled predictors" so that we can train the ensemble model. Then we assess the model performance against our test set. This "stacked" model should have improved predictive performance over the separate models.
 
@@ -843,7 +846,7 @@ row.names(pred.perf) <- c("SVM.Radial", "Random.Forest", "Gradient.Boost", "Ense
 kable(pred.perf, caption = "Per-class Weigthed Average of Precision and Recall (F-1):")
 ```
 
-> <u>Technical Notes</u>: ROC (Receiver Operating Characteristic) curve analysis was not designed for multi-classification problems, however using the [pROC][24] library, we calculate the mean area under the curve (**AUC**) on the test data of **`r round(multiclass.roc(as.ordered(trn.tst$classe), as.ordered(yhat.stk))$auc * 100, 2)`%**, which cannot be plotted. To learn more about ROC curve analysis, have a look at this BioMed Central (BMC) research paper. "Xavier Robin, Natacha Turck, Alexandre Hainard, Natalia Tiberti, Frédérique Lisacek, Jean-Charles Sanchez and Markus Müller (2011). [pROC: an open-source package for R and S+ to analyze and compare ROC curves][23]. BMC Bioinformatics, 12, p. 77. DOI: 10.1186/1471-2105-12-77".
+> <u>Technical Notes</u>: Receiver Operating Characteristic (ROC) curve analysis was not designed for multi-classification problems, however using the [pROC][24] library, we calculate the mean area under the curve (**AUC**) on the test data of **`r round(multiclass.roc(as.ordered(trn.tst$classe), as.ordered(yhat.stk))$auc * 100, 2)`%**, which cannot be plotted. To learn more about ROC curve analysis, have a look at this BioMed Central (BMC) research paper. "Xavier Robin, Natacha Turck, Alexandre Hainard, Natalia Tiberti, Frédérique Lisacek, Jean-Charles Sanchez and Markus Müller (2011). [pROC: an open-source package for R and S+ to analyze and compare ROC curves][23]. BMC Bioinformatics, 12, p. 77. DOI: 10.1186/1471-2105-12-77".
 
 ```{r model_predict, echo=FALSE, eval=FALSE, collapse=TRUE}
 #After building the final model and testing it on our validation and test sets, we apply it to the final test file to confirm our prediction accuracy. Our model had a 100% match prediction on the test file. The final output will be applied to our Coursera project submission for grading.
