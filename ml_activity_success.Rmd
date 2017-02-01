@@ -47,7 +47,8 @@ Using [RStudio][21], we import HAR data for weight-lifting exercises provided fr
 
 ### Conclusion
 
-RStudio is an excellent platform for this type of analytical project and helps analysts tell a story with data. In combination with [RMarkdown][20], RStudio readily facilitates analysis, sharing, and [reproducibility][16]. Analysts may weave together narrative text and code to seamlessly produce elegantly formatted output in various formats.
+RStudio is an excellent platform for this type of analytical project and helps analysts tell a story with data. In combination with [RMarkdown][20], RStudio readily facilitates analysis, sharing, and [reproducibility][16]. Analysts may weave together narrative text and code to seamlessly produce elegantly formatted in various output formats (i.e. html, pdf, MS Word, etc.). 
+
 
 -----
 
@@ -151,19 +152,17 @@ kable(t(table(trn.dat.all$classe)), caption = "Class Variable Frequency:")
 
 ### Handling Multicollinearity {.tabset .tabset-fade}
 
-[Multicollinearity][6] occurs when model variables are correlated to your response variable as well as each other. This overinflates the standard errors which makes some variables seem statistically insignificant when they should be significant. We have a few options for dealing with this issue. 
+Multicollinearity occurs when model variables are correlated to your response variable as well as each other. This overinflates the standard errors which makes some variables seem statistically insignificant when they should be significant. By identifying the [Variable Inflation Factor (VIF)][12], we can quantify the severity of this impact. We implemented a [stepwise VIF function][6] to identify multicollinear variables within a specified threshold. A value greater than 10 is considered to be highly collinear. The threshold may be set to the specific tolerance required for your analysis. 
 
-One option is to reduce the number of predictors to a smaller set of uncorrelated components using [Partial Least Squares Regression (PLS)][9] or [Principal Components Analysis (PCA)][10]. Another option is to simply remove the variables from the model. Removing predictors may introduce some bias (difference between expected prediction and the truth), but may also reduce the prediction variance (increase accuracy). The goal is to optimize the trade-off between bias and variance. Both options reduce our variable count and speeds our model calculation.
+We can reduce the number of predictors to a smaller set of uncorrelated components using [Partial Least Squares Regression (PLS)][9] or [Principal Components Analysis (PCA)][10] or by simply removing them from the model. Removing predictors may introduce some bias (difference between expected prediction and the truth), but may also reduce the prediction variance (increase accuracy). The goal is to optimize the trade-off between bias and variance. These options reduce our variable count and speeds our model calculation. 
 
-The goal of PCA is to explain the maximum amount of variance with the fewest number of principal components. PCA creates these components by transforming the variables into a smaller sub-space of variables (dimensionality reduction) that are uncorrelated with each other. A challenge with the components is that it can be difficult to explain what is driving model performance.
+The goal of PCA is to explain the maximum amount of variance with the fewest number of principal components. PCA creates these components by transforming the variables into a smaller sub-space of variables (dimensionality reduction) that are uncorrelated with each other. A challenge with the components is that it can be difficult to explain what is driving model performance. Using the [Caret R package][19], we apply a [Box-Cox Transformation][11] to correct for skewness, center and scale each variable and then apply PCA in one call to pre-process the variables.
 
 We are going to approach this three different ways to get a sense of effort and impact:
 
-1) remove the multicollinear predictors, 
-2) apply PCA to the multicollinear predictors, and 
-3) apply PCA to all the predictors. 
-
-Using the [Caret][19] R package, we apply a [Box-Cox Transformation][11] to correct for skewness, center and scale each variable and then apply PCA in one call to pre-process the variables. In addition, we defined a stepwise [Variable Inflation Factor (VIF)][12] function to identify multicollinear variables within our specified threshold. A value greater than 10 is considered to be highly collinear. The threshold may be set to the specific tolerance required for your analysis. 
+1. remove the multicollinear predictors, 
+2. apply PCA to the multicollinear predictors, and 
+3. apply PCA to all the predictors.
 
 ```{r setup_vif, echo=TRUE, eval=TRUE, fig.height=8, fig.width=9, cache=TRUE, collapse=TRUE}
 # compile stepwise VIF selection function for reducing collinearity among explanatory variables
@@ -423,7 +422,7 @@ We have selected three models to tune:
 
 To improve SVM performance we doubled its grid-search area during its first pass. Also, since the GBM algorithm is computationally expensive, we did significant [manual tuning][13] during its second pass to attain reasonable performance. For good measure, we created an [Ensemble (Stack)][8] model using the three separate algorithms to improve overall performance.
 
-> <u>Technical Notes</u>: Since this process can be very resource intensive, we use [OpenBlas][3], which is an optimized library to replace the standard BLAS library used by R. In addition, we use the "doMC" library to specify the number cores to correspond with the maximum number of R jobs to run in parallel. Depending on your tuning parameters and training set size, this process can easily consume all of your computer memory and may take hours to run.
+> <u>Technical Notes</u>: Since this process can be very resource intensive, we use [OpenBlas][3], which is an optimized library to replace the standard BLAS library used by R. In addition, we use the "doMC" library to specify the number cores to correspond with the maximum number of R jobs to run in parallel. Depending on your tuning parameters and training set size, this process can easily consume all of your computer memory and may take hours to run. Running machine learning on an [H2O.ai][25] cluster helps to alleviate these challenges. For more details, select the "Distributed Random Forest" tab below.
 
 #### SVM Passes
 
@@ -539,6 +538,111 @@ system.time(
 )
 tune.gbm2;
 ```
+
+#### Distributed Random Forest
+
+This machine learning algorithm is distributed across an H2O cluster. Notice how the `h2o` library is used to initialize the H2O "cloud" instance, with a maximum number of threads and memory specified. This example leverages H2O, "intelligent" defaults. To learn how to complete repeated k-fold cross-validation using H2O, check out this [H2O blog post][26].
+
+**First-pass Logic**: The first pass runs with standard parameters and stopping rounds. Note that stopping rounds will stop model training when accuracy doesn’t improve for a specified number of training rounds, based on a simple moving average.
+
+```{r model_drf_fpass, echo=TRUE, eval=TRUE, cache=FALSE, collapse=TRUE}
+# Load H2O R package
+library(h2o)
+
+# Create an H2O cloud instance
+h2o.conn = h2o.init(ip='localhost',      ## IP address of the H2O node
+                    port=54321,          ## H2O port at the node IP
+                    nthreads=-1,         ## -1: use all available threads
+                    max_mem_size='56G')  ## specify the memory size for the H2O cloud
+
+# Clean slate - just in case the cluster was already running
+h2o.removeAll()
+
+## Load dataframe into H2O cloud instance
+trn.hex <- as.h2o(trn.trn, destination_frame="trn.hex")
+vld.hex <- as.h2o(trn.vld, destination_frame="vld.hex")
+tst.hex <- as.h2o(trn.tst, destination_frame="tst.hex")
+
+###############################################################################
+## run our first predictive model
+drf1 <- h2o.randomForest(        ## h2o.randomForest function
+  training_frame = trn.hex,      ## the H2O frame for training
+  validation_frame = vld.hex,    ## the H2O frame for validation (not required)
+  x=1:25,                        ## the predictor columns, by column index
+  y=26,                          ## the target index (what we are predicting)
+  model_id = "rf_covType_v1",    ## name the model in H2O not required, but helps use Flow
+  ntrees = 400,                  ## use a maximum of 400 trees to create the random forest model. The default is 50.
+                                 ##  I have increased it because I will let the early stopping criteria decide when
+                                 ##  the random forest is sufficiently accurate
+  stopping_rounds = 2,           ## Stop fitting new trees when the 2-tree average is within 0.001 (default) of 
+                                 ##  the prior two 2-tree averages. Can be thought of as a convergence setting
+  score_each_iteration = T,      ## Predict against training and validation for each tree. Default will skip several.
+  seed = 1732)                   ## Set the random seed so that this can be reproduced.
+
+###############################################################################
+#summary(drf1)                    ## View information about the model.
+                                 ## Keys to look for are validation performance
+                                 ##  and variable importance
+
+#drf1@model$validation_metrics    ## A more direct way to access the validation 
+                                 ##  metrics. Performance metrics depend on 
+                                 ##  the type of model being built. With a
+                                 ##  multinomial classification, we will primarily
+                                 ##  look at the confusion matrix, and overall
+                                 ##  accuracy via hit_ratio @ k=1.
+
+h2o.confusionMatrix(drf1)
+h2o.hit_ratio_table(drf1, valid = T)[1,2] ## Even more directly, the hit_ratio @ k=1
+###############################################################################
+```
+
+**Second-pass Logic**: The second pass parameters were updated to increase the parameters for maximum depth and stopping tolerance/rounds.
+
+```{r model_drf_spass, echo=TRUE, eval=TRUE, cache=FALSE, collapse=TRUE}
+###############################################################################
+## run our second predictive model
+drf2 <- h2o.randomForest(        ##
+  training_frame = trn.hex,      ## the H2O frame for training
+  validation_frame = vld.hex,    ## the H2O frame for validation (not required)
+  x=1:25,                        ## the predictor columns, by column index
+  y=26,                          ## the target index (what we are predicting)
+  model_id = "rf_covType_v2",    ## name the model in H2O not required, but helps use Flow
+  ntrees = 400,                  ## use a maximum of 400 trees to create the random forest model. The default is 50.
+  max_depth = 30,                ## Increase depth, from 20
+  stopping_rounds = 4,           ##
+  stopping_tolerance = 2e-4,     ## switch from .001 to .0002
+  score_each_iteration = T,      ##
+  seed=1732)                     ##
+
+###############################################################################
+#summary(drf2)
+h2o.confusionMatrix(drf1)
+h2o.confusionMatrix(drf2)
+
+h2o.hit_ratio_table(drf1, valid=T)[1,2]     ## original random forest accuracy
+h2o.hit_ratio_table(drf2, valid=T)[1,2]     ## newest random forest accuracy
+
+
+###############################################################################
+drf.pred <- h2o.predict(object=drf2, newdata=tst.hex)
+
+## Glance at what that prediction set looks like
+## We see a final prediction in the "predict" column,
+##  and then the predicted probabilities per class.
+drf.pred
+
+## Compare these predictions to the accuracy we got from our experimentation
+h2o.hit_ratio_table(drf2, valid=T)[1,2]     ## newest random forest accuracy
+mean(drf.pred$predict==tst.hex$classe)      ## test set accuracy
+
+print(h2o.auc(drf2, valid = TRUE))
+
+#h2o.download_pojo(drf2)
+
+### All done, shutdown H2O    
+h2o.shutdown(prompt=FALSE)
+```
+
 
 ### Tuning Model Accuracy {.tabset .tabset-fade}
 
@@ -915,3 +1019,5 @@ for(x in 1:length(fin.pred)) {
 [22]: https://en.wikipedia.org/wiki/Precision_and_recall
 [23]: https://bmcbioinformatics.biomedcentral.com/articles/10.1186/1471-2105-12-77
 [24]: http://web.expasy.org/pROC/
+[25]: http://docs.h2o.ai/h2o/latest-stable/h2o-docs/welcome.html
+[26]: http://blog.h2o.ai/2015/07/kfold-cross-validation/
